@@ -2,8 +2,17 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestion Locative Complète</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>ImmoGérer</title>
+    <!-- Application installable (PWA) -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#1e293b">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="ImmoGérer">
     <!-- Tailwind CSS pour le style -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- html2pdf.js pour la génération de PDF -->
@@ -19,18 +28,38 @@
     
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="bg-gray-100 font-sans text-gray-800 h-screen overflow-hidden flex flex-col md:flex-row">
+<body class="bg-gray-100 font-sans text-gray-800 app-height overflow-hidden flex flex-col md:flex-row">
 
     <!-- Toast Notification -->
     <div id="toast" class="hidden opacity-0 transition-opacity duration-300 fixed top-6 right-6 px-4 py-3 rounded-lg font-medium text-sm flex items-center gap-2 shadow-lg z-50">
         <i id="toast-icon" class="fa-solid fa-check-circle"></i> <span id="toast-msg">Action réussie !</span>
     </div>
 
-    <!-- Menu Latéral -->
-    <aside class="w-full md:w-64 bg-slate-800 text-white flex flex-col shadow-xl z-20 flex-shrink-0">
+    <!-- En-tête mobile -->
+    <header class="md:hidden safe-top bg-slate-800 text-white flex items-center justify-between px-3 py-2 shadow-md z-20 flex-shrink-0">
+        <button type="button" onclick="openSidebar()" class="w-11 h-11 flex items-center justify-center rounded-lg hover:bg-slate-700" aria-label="Ouvrir le menu">
+            <i class="fa-solid fa-bars text-lg"></i>
+        </button>
+        <div class="flex items-center gap-2">
+            <i class="fa-solid fa-building-user text-xl text-blue-400"></i>
+            <span class="text-lg font-bold tracking-wide" id="mobile-title">ImmoGérer</span>
+        </div>
+        <button type="button" onclick="openSidebar()" class="w-11 h-11 flex items-center justify-center rounded-lg hover:bg-slate-700" aria-label="Compte">
+            <i id="mobile-account-icon" class="fa-solid fa-circle-user text-xl text-slate-300"></i>
+        </button>
+    </header>
+
+    <!-- Fond sombre derrière le menu mobile -->
+    <div id="sidebar-overlay" onclick="closeSidebar()" class="hidden md:hidden fixed inset-0 bg-slate-900/50 z-30"></div>
+
+    <!-- Menu Latéral (tiroir sur mobile) -->
+    <aside id="sidebar" class="safe-top fixed inset-y-0 left-0 w-72 max-w-[85vw] -translate-x-full transition-transform duration-200 md:static md:translate-x-0 md:w-64 bg-slate-800 text-white flex flex-col shadow-xl z-40 md:z-20 flex-shrink-0">
         <div class="p-6 flex items-center gap-3 border-b border-slate-700">
             <i class="fa-solid fa-building-user text-2xl text-blue-400"></i>
-            <h1 class="text-xl font-bold tracking-wide">ImmoGérer</h1>
+            <h1 class="text-xl font-bold tracking-wide flex-1">ImmoGérer</h1>
+            <button type="button" onclick="closeSidebar()" class="md:hidden w-10 h-10 flex items-center justify-center rounded-lg hover:bg-slate-700" aria-label="Fermer le menu">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
         </div>
         
         <nav class="flex-1 overflow-y-auto py-4 flex flex-col gap-2 px-3">
@@ -54,7 +83,10 @@
             </button>
         </nav>
 
-        <div class="p-4 border-t border-slate-700 text-xs text-slate-400 flex flex-col gap-2 md:mt-auto">
+        <div class="p-4 border-t border-slate-700 text-xs text-slate-400 flex flex-col gap-2 md:mt-auto safe-bottom">
+            <button type="button" id="btn-install" onclick="installApp()" class="hidden bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-3 rounded-lg text-xs flex items-center justify-center gap-2">
+                <i class="fa-solid fa-mobile-screen-button"></i> Installer l'application
+            </button>
             <span id="connection-status"><i class="fa-solid fa-circle-notch fa-spin text-blue-400"></i> Connexion...</span>
             <div id="account-warning" class="hidden text-[11px] text-amber-300 leading-snug">
                 <i class="fa-solid fa-triangle-exclamation"></i> Compte anonyme : vos données sont liées à ce navigateur uniquement.
@@ -67,39 +99,39 @@
     </aside>
 
     <!-- Contenu Principal -->
-    <main class="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50 relative h-full">
+    <main class="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 md:p-8 pb-28 md:pb-8 bg-slate-50 relative min-h-0">
 
         <!-- TAB 1 : TABLEAU DE BORD -->
         <div id="tab-dashboard" class="tab-content block space-y-6 max-w-6xl mx-auto">
-            <h2 class="text-2xl font-bold text-slate-800 mb-6 border-b pb-2">Vue d'ensemble <span class="text-sm font-normal text-slate-500 ml-2">(à l'instant T)</span></h2>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6 border-b pb-2">Vue d'ensemble <span class="text-sm font-normal text-slate-500 ml-2">(à l'instant T)</span></h2>
             
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                    <div class="bg-green-100 text-green-600 p-4 rounded-lg"><i class="fa-solid fa-arrow-down-up-lock text-xl"></i></div>
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
+                <div class="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 min-w-0">
+                    <div class="bg-green-100 text-green-600 p-2 sm:p-4 rounded-lg"><i class="fa-solid fa-arrow-down-up-lock text-xl"></i></div>
                     <div>
-                        <p class="text-sm text-slate-500 font-medium">Loyers encaissés</p>
-                        <h3 class="text-2xl font-bold text-slate-800" id="stat-loyers">0,00 €</h3>
+                        <p class="text-xs sm:text-sm text-slate-500 font-medium">Loyers encaissés</p>
+                        <h3 class="text-lg sm:text-2xl font-bold text-slate-800" id="stat-loyers">0,00 €</h3>
                     </div>
                 </div>
-                <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                    <div class="bg-red-100 text-red-600 p-4 rounded-lg"><i class="fa-solid fa-file-invoice-dollar text-xl"></i></div>
+                <div class="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 min-w-0">
+                    <div class="bg-red-100 text-red-600 p-2 sm:p-4 rounded-lg"><i class="fa-solid fa-file-invoice-dollar text-xl"></i></div>
                     <div>
-                        <p class="text-sm text-slate-500 font-medium">Charges (Récup.)</p>
-                        <h3 class="text-2xl font-bold text-slate-800" id="stat-charges">0,00 €</h3>
+                        <p class="text-xs sm:text-sm text-slate-500 font-medium">Charges (Récup.)</p>
+                        <h3 class="text-lg sm:text-2xl font-bold text-slate-800" id="stat-charges">0,00 €</h3>
                     </div>
                 </div>
-                <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                    <div class="bg-orange-100 text-orange-600 p-4 rounded-lg"><i class="fa-solid fa-hammer text-xl"></i></div>
+                <div class="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 min-w-0">
+                    <div class="bg-orange-100 text-orange-600 p-2 sm:p-4 rounded-lg"><i class="fa-solid fa-hammer text-xl"></i></div>
                     <div>
-                        <p class="text-sm text-slate-500 font-medium">Travaux / Entretien</p>
-                        <h3 class="text-2xl font-bold text-slate-800" id="stat-travaux">0,00 €</h3>
+                        <p class="text-xs sm:text-sm text-slate-500 font-medium">Travaux / Entretien</p>
+                        <h3 class="text-lg sm:text-2xl font-bold text-slate-800" id="stat-travaux">0,00 €</h3>
                     </div>
                 </div>
-                <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-100 flex items-center gap-4" title="Loyers encaissés - toutes les dépenses - mensualités de crédit déjà payées (depuis la date de début du crédit)">
-                    <div class="bg-blue-100 text-blue-600 p-4 rounded-lg"><i class="fa-solid fa-sack-dollar text-xl"></i></div>
+                <div class="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 min-w-0" title="Loyers encaissés - toutes les dépenses - mensualités de crédit déjà payées (depuis la date de début du crédit)">
+                    <div class="bg-blue-100 text-blue-600 p-2 sm:p-4 rounded-lg"><i class="fa-solid fa-sack-dollar text-xl"></i></div>
                     <div>
-                        <p class="text-sm text-slate-500 font-medium">Bénéfice net <span class="text-[10px]">(après crédit)</span></p>
-                        <h3 class="text-2xl font-bold text-slate-800" id="stat-solde">0,00 €</h3>
+                        <p class="text-xs sm:text-sm text-slate-500 font-medium">Bénéfice net <span class="text-[10px]">(après crédit)</span></p>
+                        <h3 class="text-lg sm:text-2xl font-bold text-slate-800" id="stat-solde">0,00 €</h3>
                     </div>
                 </div>
             </div>
@@ -139,7 +171,7 @@
                         <thead>
                             <tr class="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider">
                                 <th class="p-3 rounded-tl-lg">Date</th>
-                                <th class="p-3">Type</th>
+                                <th class="p-3 hidden sm:table-cell">Type</th>
                                 <th class="p-3">Description</th>
                                 <th class="p-3 text-right rounded-tr-lg">Montant</th>
                             </tr>
@@ -153,9 +185,9 @@
         </div>
 
         <!-- TAB CALENDRIER -->
-        <div id="tab-calendrier" class="tab-content hidden max-w-6xl mx-auto h-full flex-col">
-            <h2 class="text-2xl font-bold text-slate-800 mb-6 border-b pb-2 flex-shrink-0">Calendrier des Opérations</h2>
-            <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6 flex-1 min-h-[500px]">
+        <div id="tab-calendrier" class="tab-content hidden max-w-6xl mx-auto flex-col h-full min-h-[70vh]">
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6 border-b pb-2 flex-shrink-0">Calendrier des Opérations</h2>
+            <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-2 sm:p-6 flex-1 min-h-[520px]">
                 <div id="calendar" class="h-full"></div>
             </div>
         </div>
@@ -163,7 +195,7 @@
         <!-- TAB BAIL & LOCATAIRE -->
         <div id="tab-locataire" class="tab-content hidden space-y-6 max-w-4xl mx-auto">
             <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-                <h2 class="text-2xl font-bold text-slate-800 mb-6 flex items-center gap-2 border-b pb-2">
+                <h2 class="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6 flex items-center gap-2 border-b pb-2">
                     <i class="fa-solid fa-pen-to-square text-blue-500"></i> Contrat & Profils
                 </h2>
                 
@@ -263,12 +295,12 @@
 
         <!-- TAB 3 : FINANCES & SUIVI -->
         <div id="tab-finances" class="tab-content hidden space-y-6 max-w-6xl mx-auto">
-            <h2 class="text-2xl font-bold text-slate-800 mb-6 border-b pb-2">Suivi Financier</h2>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6 border-b pb-2">Suivi Financier</h2>
             
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <!-- Formulaire d'ajout/modification -->
                 <div class="lg:col-span-1">
-                    <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-5 sticky top-6">
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-5 lg:sticky lg:top-6">
                         
                         <button type="button" id="btn-auto-loyer" onclick="autoGenerateLoyer()" class="w-full mb-6 bg-green-100 text-green-700 hover:bg-green-200 font-bold py-3 rounded-lg transition flex justify-center items-center gap-2 border border-green-300 shadow-sm">
                             <i class="fa-solid fa-bolt"></i> Encaisser le loyer du mois
@@ -340,10 +372,10 @@
                 <!-- Liste des transactions -->
                 <div class="lg:col-span-2">
                     <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-5">
-                        <div class="flex justify-between items-center mb-4">
+                        <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
                             <h3 class="font-bold text-slate-800">Historique complet</h3>
                             
-                            <div class="flex gap-2">
+                            <div class="flex flex-wrap gap-2">
                                 <button onclick="exportJSON()" class="text-sm bg-purple-50 border border-purple-200 hover:bg-purple-100 text-purple-700 py-1.5 px-3 rounded-lg flex items-center gap-2 transition" title="Sauvegarde complète">
                                     <i class="fa-solid fa-file-code"></i> Sauvegarde JSON
                                 </button>
@@ -356,12 +388,12 @@
                                 </button>
                             </div>
                         </div>
-                        <div class="overflow-x-auto max-h-[600px] overflow-y-auto rounded-lg border border-slate-100">
+                        <div class="overflow-x-auto max-h-[70vh] lg:max-h-[600px] overflow-y-auto rounded-lg border border-slate-100">
                             <table class="w-full text-left border-collapse">
                                 <thead class="sticky top-0 bg-slate-50 shadow-sm z-10">
                                     <tr class="text-slate-500 text-sm uppercase tracking-wider">
                                         <th class="p-3">Date</th>
-                                        <th class="p-3">Opération</th>
+                                        <th class="p-3 hidden sm:table-cell">Opération</th>
                                         <th class="p-3">Description</th>
                                         <th class="p-3 text-right">Montant</th>
                                         <th class="p-3 text-center">Actions</th>
@@ -379,12 +411,12 @@
 
         <!-- TAB 4 : RÉGULARISATION -->
         <div id="tab-regularisation" class="tab-content hidden space-y-6 max-w-4xl mx-auto">
-            <h2 class="text-2xl font-bold text-slate-800 mb-6 border-b pb-2">Régularisation des Charges <span class="text-sm font-normal text-slate-500 ml-2">(à l'instant T)</span></h2>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6 border-b pb-2">Régularisation des Charges <span class="text-sm font-normal text-slate-500 ml-2">(à l'instant T)</span></h2>
             
             <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
                 <p class="text-slate-600 mb-6">Cet outil compare les provisions versées par votre locataire avec les charges réelles (récupérables) que vous avez payées durant l'année.</p>
                 
-                <div class="flex items-center gap-4 mb-8 bg-slate-50 p-4 rounded-lg border border-slate-200">
+                <div class="flex flex-wrap items-center gap-3 sm:gap-4 mb-8 bg-slate-50 p-4 rounded-lg border border-slate-200">
                     <label class="font-bold text-slate-700">Calculer pour l'année :</label>
                     <input type="number" id="reg_year" min="2000" max="2100" class="w-32 p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 text-center font-bold text-lg" value="2023">
                     <button onclick="calculateRegularization()" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition">Calculer</button>
@@ -413,7 +445,7 @@
 
         <!-- TAB 5 : QUITTANCES (PDF) -->
         <div id="tab-quittances" class="tab-content hidden space-y-6 max-w-2xl mx-auto">
-            <h2 class="text-2xl font-bold text-slate-800 mb-6 border-b pb-2">Générer des Quittances</h2>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6 border-b pb-2">Générer des Quittances</h2>
             
             <div class="bg-white rounded-xl shadow-sm border border-blue-200 p-8">
                 <div class="flex items-center justify-center mb-6">
@@ -451,6 +483,25 @@
         </div>
 
     </main>
+
+    <!-- Barre de navigation mobile (en bas) -->
+    <nav class="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] z-20 grid grid-cols-5 safe-bottom">
+        <button type="button" onclick="switchTab('dashboard')" id="mnav-dashboard" class="mnav-btn active flex flex-col items-center justify-center gap-1 py-2 text-[11px] text-slate-500">
+            <i class="fa-solid fa-chart-pie text-lg"></i> Accueil
+        </button>
+        <button type="button" onclick="switchTab('finances')" id="mnav-finances" class="mnav-btn flex flex-col items-center justify-center gap-1 py-2 text-[11px] text-slate-500">
+            <i class="fa-solid fa-wallet text-lg"></i> Finances
+        </button>
+        <button type="button" onclick="switchTab('calendrier')" id="mnav-calendrier" class="mnav-btn flex flex-col items-center justify-center gap-1 py-2 text-[11px] text-slate-500">
+            <i class="fa-solid fa-calendar-days text-lg"></i> Calendrier
+        </button>
+        <button type="button" onclick="switchTab('quittances')" id="mnav-quittances" class="mnav-btn flex flex-col items-center justify-center gap-1 py-2 text-[11px] text-slate-500">
+            <i class="fa-solid fa-file-pdf text-lg"></i> Quittances
+        </button>
+        <button type="button" onclick="openSidebar()" id="mnav-more" class="mnav-btn flex flex-col items-center justify-center gap-1 py-2 text-[11px] text-slate-500">
+            <i class="fa-solid fa-ellipsis text-lg"></i> Plus
+        </button>
+    </nav>
 
     <!-- Conteneur invisible pour construire le HTML du PDF -->
     <div id="pdf-workspace"></div>

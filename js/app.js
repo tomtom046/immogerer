@@ -74,7 +74,13 @@ window.switchTab = function(tabId) {
     const btn = document.getElementById('nav-' + tabId);
     btn.classList.add('active', 'bg-blue-600', 'text-white');
     btn.classList.remove('text-slate-300');
-    
+
+    // Barre du bas (mobile) : les onglets absents de la barre activent "Plus"
+    document.querySelectorAll('.mnav-btn').forEach(el => el.classList.remove('active'));
+    (document.getElementById('mnav-' + tabId) || document.getElementById('mnav-more')).classList.add('active');
+    closeSidebar();
+    document.querySelector('main').scrollTop = 0;
+
     if(tabId === 'regularisation') calculateRegularization();
     if(tabId === 'calendrier') setTimeout(initOrUpdateCalendar, 50);
 };
@@ -105,7 +111,51 @@ function updateAccountUI(user) {
     document.getElementById('account-warning').classList.toggle('hidden', !isAnon);
     document.getElementById('btn-google-login').classList.toggle('hidden', !isAnon);
     document.getElementById('btn-logout').classList.toggle('hidden', isAnon);
+    const mIcon = document.getElementById('mobile-account-icon');
+    if (mIcon) mIcon.className = `fa-solid ${isAnon ? 'fa-circle-exclamation text-amber-400' : 'fa-circle-user text-green-400'} text-xl`;
 }
+
+// --- MENU TIROIR (mobile) ---
+window.openSidebar = function() {
+    document.getElementById('sidebar').classList.add('open');
+    document.getElementById('sidebar-overlay').classList.remove('hidden');
+};
+window.closeSidebar = function() {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebar-overlay').classList.add('hidden');
+};
+
+// --- INSTALLATION (PWA) ---
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(err => console.warn('Service worker non enregistré :', err));
+}
+let deferredInstallPrompt = null;
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    document.getElementById('btn-install').classList.remove('hidden');
+});
+window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    document.getElementById('btn-install').classList.add('hidden');
+    showToast("Application installée !");
+});
+// Sur iPhone/iPad, il n'y a pas d'invite automatique : on affiche le bouton pour expliquer la marche à suivre
+if (isIOS && !isStandalone) document.getElementById('btn-install').classList.remove('hidden');
+
+window.installApp = async function() {
+    if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        await deferredInstallPrompt.userChoice;
+        deferredInstallPrompt = null;
+    } else if (isIOS) {
+        alert("Pour installer ImmoGérer sur iPhone / iPad :\n\n1. Ouvrez ce site dans Safari\n2. Touchez le bouton Partager (carré avec une flèche)\n3. Choisissez « Sur l'écran d'accueil »\n4. Touchez « Ajouter »");
+    } else {
+        alert("Pour installer ImmoGérer : ouvrez le menu du navigateur (⋮) puis « Installer l'application » ou « Ajouter à l'écran d'accueil ».");
+    }
+};
 
 // Lie le compte anonyme actuel à Google (garde le même identifiant => aucune donnée perdue).
 // Si ce compte Google est déjà lié ailleurs, on se connecte simplement dessus.
@@ -538,7 +588,7 @@ function updateDashboard() {
     
     const elSolde = document.getElementById('stat-solde');
     elSolde.innerText = formatMontant(solde);
-    elSolde.className = solde >= 0 ? "text-2xl font-bold text-green-600" : "text-2xl font-bold text-red-600";
+    elSolde.className = solde >= 0 ? "text-lg sm:text-2xl font-bold text-green-600" : "text-lg sm:text-2xl font-bold text-red-600";
 
     const dashList = document.getElementById('dash-transactions-list');
     dashList.innerHTML = '';
@@ -620,10 +670,14 @@ function initOrUpdateCalendar() {
 
     if (!calendarInstance) {
         calendarInstance = new FullCalendar.Calendar(calendarEl, {
-            initialView: 'dayGridMonth', locale: 'fr',
-            headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth' },
+            // Sur téléphone, la vue "Liste" est bien plus lisible que la grille du mois
+            initialView: window.innerWidth < 768 ? 'listMonth' : 'dayGridMonth', locale: 'fr',
+            headerToolbar: window.innerWidth < 768
+                ? { left: 'prev,next', center: 'title', right: 'listMonth,dayGridMonth' }
+                : { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth' },
             buttonText: { today: "Aujourd'hui", month: 'Mois', list: 'Liste' },
-            events: eventsData, height: '100%'
+            noEventsContent: 'Aucune opération ce mois-ci',
+            events: eventsData, height: window.innerWidth < 768 ? 'auto' : '100%'
         });
         calendarInstance.render();
     } else {
@@ -664,7 +718,7 @@ function createTransactionRow(t, isFullTable) {
     let actionHtml = '<span class="text-slate-300">-</span>';
     if (isFullTable) {
         actionHtml = `
-            <div class="flex justify-center items-center gap-1">
+            <div class="flex flex-col sm:flex-row justify-center items-center gap-0 sm:gap-1">
                 <button onclick="editTransaction('${t.id}')" class="text-blue-500 hover:text-blue-700 p-2 rounded hover:bg-blue-50 transition" title="Modifier"><i class="fa-solid fa-pen"></i></button>
                 <button onclick="duplicateTransaction('${t.id}')" class="text-emerald-500 hover:text-emerald-700 p-2 rounded hover:bg-emerald-50 transition" title="Dupliquer"><i class="fa-solid fa-copy"></i></button>
                 <button onclick="deleteTransaction('${t.id}')" class="text-red-500 hover:text-red-700 p-2 rounded hover:bg-red-50 transition" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
@@ -672,11 +726,11 @@ function createTransactionRow(t, isFullTable) {
     }
 
     tr.innerHTML = `
-        <td class="p-3 text-slate-700">${displayDate}</td>
-        <td class="p-3">${typeBadge}</td>
-        <td class="p-3 text-slate-700 font-medium leading-tight">${escapeHtml(t.desc)}<br>${assigneeBadge}</td>
-        <td class="p-3 text-right ${amountColor}">${sign} ${formatMontant(t.amount)}</td>
-        ${isFullTable ? `<td class="p-3 text-center">${actionHtml}</td>` : ''}
+        <td class="p-2 sm:p-3 text-slate-700 whitespace-nowrap text-xs sm:text-sm">${displayDate}</td>
+        <td class="p-3 hidden sm:table-cell">${typeBadge}</td>
+        <td class="p-2 sm:p-3 text-slate-700 font-medium leading-tight break-words"><div class="sm:hidden mb-1">${typeBadge}</div>${escapeHtml(t.desc)}<br>${assigneeBadge}</td>
+        <td class="p-2 sm:p-3 text-right whitespace-nowrap ${amountColor}">${sign} ${formatMontant(t.amount)}</td>
+        ${isFullTable ? `<td class="p-1 sm:p-3 text-center">${actionHtml}</td>` : ''}
     `;
     return tr;
 }

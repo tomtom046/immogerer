@@ -8,3 +8,21 @@
 .tab-btn.active { background-color: #2563eb; color: white; }
 .fc-event { cursor: pointer; }
 .fc-toolbar-title { font-size: 1.25rem !important; color: #1e293b; }
+
+/* --- Mobile & application installée --- */
+/* Hauteur réelle de l'écran (évite la barre d'adresse mobile qui cache le bas) */
+.app-height { height: 100vh; height: 100dvh; }
+/* Encoches et barres système (iPhone, Android en plein écran) */
+.safe-top { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+#sidebar.open { transform: translateX(0); }
+.mnav-btn.active { color: #2563eb; font-weight: 600; }
+.mnav-btn { -webkit-tap-highlight-color: transparent; }
+/* Évite le zoom automatique d'iOS sur les champs de saisie */
+@media (max-width: 767px) {
+    input, select, textarea { font-size: 16px !important; }
+    .fc .fc-toolbar { flex-wrap: wrap; gap: .5rem; }
+    .fc .fc-toolbar-title { font-size: 1rem !important; }
+    .fc .fc-button { padding: .3rem .5rem; font-size: .8rem; }
+    #toast { left: 1rem; right: 1rem; top: calc(env(safe-area-inset-top) + 4rem); justify-content: center; }
+}
