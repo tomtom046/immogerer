@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>ImmoGérer</title>
+    <!-- Thème appliqué avant l'affichage (évite un flash blanc en mode sombre) -->
+    <script>
+        (function () {
+            var mode = 'auto';
+            try { mode = localStorage.getItem('immogerer-theme') || 'auto'; } catch (e) {}
+            var dark = mode === 'dark' || (mode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            if (dark) document.documentElement.classList.add('dark');
+        })();
+    </script>
     <!-- Application installable (PWA) -->
     <link rel="manifest" href="manifest.webmanifest">
     <meta name="theme-color" content="#1e293b">
@@ -26,13 +35,14 @@
     <!-- FullCalendar pour la vue calendrier -->
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
     
-    <link rel="stylesheet" href="css/style.css?v=2">
+    <link rel="stylesheet" href="css/style.css?v=3">
 </head>
 <body class="bg-gray-100 font-sans text-gray-800 app-height overflow-hidden flex flex-col md:flex-row">
 
     <!-- Toast Notification -->
     <div id="toast" class="hidden opacity-0 transition-opacity duration-300 fixed top-6 right-6 px-4 py-3 rounded-lg font-medium text-sm flex items-center gap-2 shadow-lg z-50">
         <i id="toast-icon" class="fa-solid fa-check-circle"></i> <span id="toast-msg">Action réussie !</span>
+        <button type="button" id="toast-action" class="hidden ml-2 font-bold underline underline-offset-2 whitespace-nowrap"></button>
     </div>
 
     <!-- En-tête mobile -->
@@ -44,9 +54,14 @@
             <i class="fa-solid fa-building-user text-xl text-blue-400"></i>
             <span class="text-lg font-bold tracking-wide" id="mobile-title">ImmoGérer</span>
         </div>
-        <button type="button" onclick="openSidebar()" class="w-11 h-11 flex items-center justify-center rounded-lg hover:bg-slate-700" aria-label="Compte">
-            <i id="mobile-account-icon" class="fa-solid fa-circle-user text-xl text-slate-300"></i>
-        </button>
+        <div class="flex items-center">
+            <button type="button" onclick="cycleTheme()" class="w-11 h-11 flex items-center justify-center rounded-lg hover:bg-slate-700" aria-label="Changer de thème">
+                <i class="theme-icon fa-solid fa-circle-half-stroke text-lg text-slate-300"></i>
+            </button>
+            <button type="button" onclick="openSidebar()" class="w-11 h-11 flex items-center justify-center rounded-lg hover:bg-slate-700" aria-label="Compte">
+                <i id="mobile-account-icon" class="fa-solid fa-circle-user text-xl text-slate-300"></i>
+            </button>
+        </div>
     </header>
 
     <!-- Fond sombre derrière le menu mobile -->
@@ -84,6 +99,10 @@
         </nav>
 
         <div class="p-4 border-t border-slate-700 text-xs text-slate-400 flex flex-col gap-2 md:mt-auto safe-bottom">
+            <button type="button" onclick="cycleTheme()" class="flex items-center justify-between gap-2 text-slate-300 hover:text-white hover:bg-slate-700 py-2 px-3 rounded-lg text-xs border border-slate-600">
+                <span class="flex items-center gap-2"><i class="theme-icon fa-solid fa-circle-half-stroke"></i> Thème</span>
+                <span id="theme-label" class="font-semibold">Automatique</span>
+            </button>
             <button type="button" id="btn-install" onclick="installApp()" class="hidden bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-3 rounded-lg text-xs flex items-center justify-center gap-2">
                 <i class="fa-solid fa-mobile-screen-button"></i> Installer l'application
             </button>
@@ -104,34 +123,61 @@
         <!-- TAB 1 : TABLEAU DE BORD -->
         <div id="tab-dashboard" class="tab-content block space-y-6 max-w-6xl mx-auto">
             <h2 class="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6 border-b pb-2">Vue d'ensemble <span class="text-sm font-normal text-slate-500 ml-2">(à l'instant T)</span></h2>
-            
+
+            <!-- CE MOIS-CI -->
+            <section class="bg-gradient-to-br from-slate-800 to-slate-700 text-white rounded-2xl shadow-md p-4 sm:p-6">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <h3 class="text-lg sm:text-xl font-bold flex items-center gap-2"><i class="fa-regular fa-calendar-check text-blue-300"></i> <span id="month-title">Ce mois-ci</span></h3>
+                    <span id="month-status" class="skeleton text-xs font-bold px-3 py-1 rounded-full bg-white/10">…</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                    <div class="bg-white/10 rounded-xl p-3 sm:p-4">
+                        <p class="text-xs text-slate-300 uppercase tracking-wide">Loyer reçu</p>
+                        <p class="text-2xl font-bold mt-1"><span id="month-paid" class="skeleton">0 €</span> <span class="text-sm font-normal text-slate-300">/ <span id="month-expected">0 €</span></span></p>
+                        <div class="h-1.5 bg-white/10 rounded-full mt-2 overflow-hidden"><div id="month-progress" class="h-full bg-green-400 rounded-full transition-all duration-500" style="width:0%"></div></div>
+                    </div>
+                    <div class="bg-white/10 rounded-xl p-3 sm:p-4">
+                        <p class="text-xs text-slate-300 uppercase tracking-wide">Dépenses du mois</p>
+                        <p class="text-2xl font-bold mt-1" id="month-expenses"><span class="skeleton">0 €</span></p>
+                        <p class="text-xs text-slate-300 mt-1" id="month-expenses-detail">&nbsp;</p>
+                    </div>
+                    <div class="bg-white/10 rounded-xl p-3 sm:p-4">
+                        <p class="text-xs text-slate-300 uppercase tracking-wide">Prochaine échéance</p>
+                        <p class="text-base font-bold mt-1 leading-snug" id="month-next">—</p>
+                        <p class="text-xs text-slate-300 mt-1" id="month-next-date">&nbsp;</p>
+                    </div>
+                </div>
+                <div id="month-alerts" class="mt-3 space-y-2"></div>
+                <div id="month-actions" class="mt-4 flex flex-wrap gap-2"></div>
+            </section>
+
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
                 <div class="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 min-w-0">
                     <div class="bg-green-100 text-green-600 p-2 sm:p-4 rounded-lg"><i class="fa-solid fa-arrow-down-up-lock text-xl"></i></div>
                     <div>
                         <p class="text-xs sm:text-sm text-slate-500 font-medium">Loyers encaissés</p>
-                        <h3 class="text-lg sm:text-2xl font-bold text-slate-800" id="stat-loyers">0,00 €</h3>
+                        <h3 class="skeleton text-lg sm:text-2xl font-bold text-slate-800" id="stat-loyers">0,00 €</h3>
                     </div>
                 </div>
                 <div class="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 min-w-0">
                     <div class="bg-red-100 text-red-600 p-2 sm:p-4 rounded-lg"><i class="fa-solid fa-file-invoice-dollar text-xl"></i></div>
                     <div>
                         <p class="text-xs sm:text-sm text-slate-500 font-medium">Charges (Récup.)</p>
-                        <h3 class="text-lg sm:text-2xl font-bold text-slate-800" id="stat-charges">0,00 €</h3>
+                        <h3 class="skeleton text-lg sm:text-2xl font-bold text-slate-800" id="stat-charges">0,00 €</h3>
                     </div>
                 </div>
                 <div class="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 min-w-0">
                     <div class="bg-orange-100 text-orange-600 p-2 sm:p-4 rounded-lg"><i class="fa-solid fa-hammer text-xl"></i></div>
                     <div>
                         <p class="text-xs sm:text-sm text-slate-500 font-medium">Travaux / Entretien</p>
-                        <h3 class="text-lg sm:text-2xl font-bold text-slate-800" id="stat-travaux">0,00 €</h3>
+                        <h3 class="skeleton text-lg sm:text-2xl font-bold text-slate-800" id="stat-travaux">0,00 €</h3>
                     </div>
                 </div>
                 <div class="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-slate-100 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 min-w-0" title="Loyers encaissés - toutes les dépenses - mensualités de crédit déjà payées (depuis la date de début du crédit)">
                     <div class="bg-blue-100 text-blue-600 p-2 sm:p-4 rounded-lg"><i class="fa-solid fa-sack-dollar text-xl"></i></div>
                     <div>
                         <p class="text-xs sm:text-sm text-slate-500 font-medium">Bénéfice net <span class="text-[10px]">(après crédit)</span></p>
-                        <h3 class="text-lg sm:text-2xl font-bold text-slate-800" id="stat-solde">0,00 €</h3>
+                        <h3 class="skeleton text-lg sm:text-2xl font-bold text-slate-800" id="stat-solde">0,00 €</h3>
                     </div>
                 </div>
             </div>
@@ -163,6 +209,56 @@
                     </div>
                 </div>
             </div>
+
+            <!-- CRÉDIT IMMOBILIER -->
+            <section id="credit-section" class="bg-white rounded-xl shadow-sm border border-slate-100 p-4 sm:p-6">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                    <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-building-columns text-purple-500"></i> Crédit immobilier</h3>
+                    <span id="credit-end" class="text-xs text-slate-500"></span>
+                </div>
+                <div id="credit-empty" class="text-sm text-slate-500 bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
+                    <i class="fa-solid fa-circle-info text-purple-400 mr-1"></i> Renseignez le <strong>capital emprunté</strong>, le <strong>taux</strong>, la <strong>durée</strong> et la <strong>première mensualité</strong> dans
+                    <button type="button" onclick="switchTab('locataire')" class="text-blue-600 underline font-medium">Bail & Locataire</button> pour voir le capital restant dû et les intérêts déductibles.
+                </div>
+                <div id="credit-content" class="hidden">
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div class="p-3 bg-purple-50 rounded-lg border border-purple-100">
+                            <p class="text-[11px] text-purple-700 font-medium uppercase tracking-wide">Capital restant dû</p>
+                            <p class="text-lg sm:text-xl font-bold text-purple-900" id="credit-remaining">—</p>
+                        </div>
+                        <div class="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                            <p class="text-[11px] text-blue-700 font-medium uppercase tracking-wide">Capital remboursé</p>
+                            <p class="text-lg sm:text-xl font-bold text-blue-900" id="credit-repaid">—</p>
+                        </div>
+                        <div class="p-3 bg-amber-50 rounded-lg border border-amber-100">
+                            <p class="text-[11px] text-amber-700 font-medium uppercase tracking-wide" id="credit-interest-label">Intérêts de l'année</p>
+                            <p class="text-lg sm:text-xl font-bold text-amber-900" id="credit-interest-year">—</p>
+                            <p class="text-[10px] text-amber-700 mt-0.5">Déductibles au régime réel</p>
+                        </div>
+                        <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                            <p class="text-[11px] text-slate-600 font-medium uppercase tracking-wide">Mensualité (hors assurance)</p>
+                            <p class="text-lg sm:text-xl font-bold text-slate-800" id="credit-payment">—</p>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <div class="flex justify-between text-xs text-slate-500 mb-1"><span>Avancement du remboursement</span><span id="credit-progress-label">0 %</span></div>
+                        <div class="h-2.5 bg-slate-100 rounded-full overflow-hidden"><div id="credit-progress" class="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full transition-all duration-500" style="width:0%"></div></div>
+                    </div>
+                    <details class="mt-4 group">
+                        <summary class="cursor-pointer text-sm font-medium text-blue-600 hover:text-blue-800 select-none list-none flex items-center gap-2">
+                            <i class="fa-solid fa-chevron-right text-xs transition-transform group-open:rotate-90"></i> Tableau d'amortissement par année
+                        </summary>
+                        <div class="overflow-x-auto mt-3 rounded-lg border border-slate-100">
+                            <table class="w-full text-sm text-right border-collapse">
+                                <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                                    <tr><th class="p-2 sm:p-3 text-left">Année</th><th class="p-2 sm:p-3">Intérêts</th><th class="p-2 sm:p-3">Capital</th><th class="p-2 sm:p-3">Restant dû</th></tr>
+                                </thead>
+                                <tbody id="credit-table" class="divide-y divide-slate-100"></tbody>
+                            </table>
+                        </div>
+                    </details>
+                </div>
+            </section>
 
             <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6 mt-6">
                 <h3 class="text-lg font-semibold mb-4 text-slate-800">Dernières opérations passées</h3>
@@ -214,8 +310,23 @@
                             <div class="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
                                 <label class="block text-sm font-bold text-purple-800 mb-1"><i class="fa-solid fa-building-columns"></i> Mensualité crédit immobilier (€)</label>
                                 <input type="number" id="credit_mensualite" step="0.01" placeholder="Ex: 650" class="w-full p-2 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-500 disabled:bg-slate-200" disabled>
+                                <p class="text-[11px] text-purple-700 mt-1">Laissez vide pour la calculer à partir du capital, du taux et de la durée.</p>
                                 <label class="block text-xs font-bold text-purple-800 mt-2 mb-1">Première mensualité (mois)</label>
                                 <input type="month" id="credit_debut" class="w-full p-2 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-500 disabled:bg-slate-200" disabled>
+                                <div class="grid grid-cols-3 gap-2 mt-2">
+                                    <div>
+                                        <label class="block text-xs font-bold text-purple-800 mb-1">Capital (€)</label>
+                                        <input type="number" id="credit_capital" step="0.01" min="0" placeholder="120000" class="w-full p-2 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-500 disabled:bg-slate-200" disabled>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-purple-800 mb-1">Taux (%)</label>
+                                        <input type="number" id="credit_taux" step="0.01" min="0" placeholder="3,5" class="w-full p-2 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-500 disabled:bg-slate-200" disabled>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-purple-800 mb-1">Durée (ans)</label>
+                                        <input type="number" id="credit_duree" step="1" min="1" max="40" placeholder="20" class="w-full p-2 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-500 disabled:bg-slate-200" disabled>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -371,7 +482,7 @@
 
                 <!-- Liste des transactions -->
                 <div class="lg:col-span-2">
-                    <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-5">
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-3 sm:p-5">
                         <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
                             <h3 class="font-bold text-slate-800">Historique complet</h3>
                             
@@ -388,15 +499,31 @@
                                 </button>
                             </div>
                         </div>
+
+                        <!-- Recherche & filtres -->
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                            <div class="col-span-2 relative">
+                                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+                                <input type="search" id="filter_text" oninput="renderTransactionsTable()" placeholder="Rechercher (description, montant…)" class="w-full pl-9 p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 text-sm">
+                            </div>
+                            <select id="filter_year" onchange="renderTransactionsTable()" class="p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 bg-white text-sm">
+                                <option value="">Toutes les années</option>
+                            </select>
+                            <select id="filter_type" onchange="renderTransactionsTable()" class="p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 bg-white text-sm">
+                                <option value="">Toutes catégories</option>
+                            </select>
+                        </div>
+                        <div id="filter-summary" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-sm mb-3 px-3 py-2 bg-slate-50 rounded-lg border border-slate-100"></div>
+
                         <div class="overflow-x-auto max-h-[70vh] lg:max-h-[600px] overflow-y-auto rounded-lg border border-slate-100">
                             <table class="w-full text-left border-collapse">
                                 <thead class="sticky top-0 bg-slate-50 shadow-sm z-10">
-                                    <tr class="text-slate-500 text-sm uppercase tracking-wider">
-                                        <th class="p-3">Date</th>
+                                    <tr class="text-slate-500 text-xs sm:text-sm uppercase tracking-wider">
+                                        <th class="p-2 sm:p-3">Date</th>
                                         <th class="p-3 hidden sm:table-cell">Opération</th>
-                                        <th class="p-3">Description</th>
-                                        <th class="p-3 text-right">Montant</th>
-                                        <th class="p-3 text-center">Actions</th>
+                                        <th class="p-2 sm:p-3">Description</th>
+                                        <th class="p-2 sm:p-3 text-right">Montant</th>
+                                        <th class="p-1 sm:p-3 text-center"><span class="hidden sm:inline">Actions</span><i class="fa-solid fa-ellipsis-vertical sm:hidden"></i></th>
                                     </tr>
                                 </thead>
                                 <tbody id="full-transactions-list" class="text-sm divide-y divide-slate-100">
@@ -468,7 +595,7 @@
                     <p class="text-xs text-center text-slate-500 mt-1">Pour un seul mois, mettez la même date.</p>
 
                     <button type="button" id="btn-generate" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-xl shadow-md transition-colors flex items-center justify-center gap-3 text-lg mt-4 opacity-50 cursor-not-allowed" disabled>
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Créer le document PDF
+                        <i class="fa-solid fa-eye"></i> Aperçu &amp; téléchargement PDF
                     </button>
 
                     <button type="button" id="btn-generate-email" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl shadow-md transition-colors flex items-center justify-center gap-3 mt-2 opacity-50 cursor-not-allowed" disabled>
@@ -507,25 +634,80 @@
     <div id="pdf-workspace"></div>
 
     <!-- Modale de confirmation de sécurité pour les emails -->
-    <div id="email-confirm-modal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4 transition-opacity">
-        <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 transform transition-all">
-            <div class="flex items-center gap-3 text-red-600 mb-4 border-b border-slate-100 pb-3">
-                <i class="fa-solid fa-triangle-exclamation text-2xl"></i>
+    <div id="email-confirm-modal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="modal-card bg-white rounded-t-2xl sm:rounded-xl shadow-2xl max-w-lg w-full p-5 sm:p-6 safe-bottom">
+            <div id="modal-head" class="flex items-center gap-3 text-red-600 mb-4 border-b border-slate-100 pb-3">
+                <i id="modal-head-icon" class="fa-solid fa-triangle-exclamation text-2xl"></i>
                 <h3 class="text-xl font-bold" id="modal-title">Confirmer l'envoi</h3>
             </div>
             <p class="text-slate-700 mb-4 font-medium" id="modal-text">Êtes-vous sûr de vouloir envoyer cet email ?</p>
-            
+
             <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm text-slate-600 mb-6 max-h-48 overflow-y-auto" id="modal-preview"></div>
-            
-            <div class="flex justify-end gap-3">
+
+            <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
                 <button id="modal-cancel" class="px-5 py-2.5 text-slate-600 hover:bg-slate-100 font-medium rounded-lg transition">Annuler</button>
-                <button id="modal-confirm" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm flex items-center gap-2 transition">
+                <button id="modal-extra" class="hidden px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition"></button>
+                <button id="modal-confirm" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm flex items-center justify-center gap-2 transition">
                     <i class="fa-solid fa-paper-plane"></i> Oui, envoyer l'email
                 </button>
             </div>
         </div>
     </div>
 
-    <script type="module" src="js/app.js?v=2"></script>
+    <!-- Aperçu des quittances avant téléchargement / envoi -->
+    <div id="preview-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[90] flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="modal-card bg-white rounded-t-2xl sm:rounded-xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+            <div class="flex items-center justify-between gap-3 p-4 border-b border-slate-100">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-file-pdf text-red-500"></i> Aperçu</h3>
+                    <p id="preview-summary" class="text-xs text-slate-500 mt-0.5"></p>
+                </div>
+                <button type="button" onclick="closePreview()" class="w-10 h-10 rounded-lg hover:bg-slate-100 text-slate-500" aria-label="Fermer"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div id="preview-pages" class="flex-1 overflow-y-auto bg-slate-200 p-3 sm:p-6 space-y-4"></div>
+            <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 p-4 border-t border-slate-100 safe-bottom">
+                <button type="button" onclick="closePreview()" class="px-5 py-2.5 text-slate-600 hover:bg-slate-100 font-medium rounded-lg">Fermer</button>
+                <button type="button" id="preview-email" onclick="sendFromPreview()" class="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold rounded-lg flex items-center justify-center gap-2"><i class="fa-solid fa-paper-plane"></i> Envoyer par email</button>
+                <button type="button" id="preview-download" onclick="downloadFromPreview()" class="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg flex items-center justify-center gap-2"><i class="fa-solid fa-download"></i> Télécharger le PDF</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ajout rapide d'une opération -->
+    <div id="quickadd-modal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[80] flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="if(event.target===this) closeQuickAdd()">
+        <form id="quickadd-form" class="modal-card bg-white rounded-t-2xl sm:rounded-xl shadow-2xl w-full max-w-md p-5 space-y-3 safe-bottom">
+            <div class="flex items-center justify-between">
+                <h3 class="text-lg font-bold text-slate-800">Nouvelle opération</h3>
+                <button type="button" onclick="closeQuickAdd()" class="w-10 h-10 rounded-lg hover:bg-slate-100 text-slate-500" aria-label="Fermer"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <button type="button" onclick="closeQuickAdd(); autoGenerateLoyer()" class="w-full bg-green-100 text-green-700 hover:bg-green-200 font-bold py-3 rounded-lg border border-green-300 flex justify-center items-center gap-2">
+                <i class="fa-solid fa-bolt"></i> Encaisser le loyer du mois
+            </button>
+            <div id="qa-types" class="grid grid-cols-4 gap-2"></div>
+            <div class="grid grid-cols-2 gap-2">
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Montant (€)</label>
+                    <input type="number" id="qa_amount" step="0.01" min="0" required inputmode="decimal" class="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-lg font-bold">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Date</label>
+                    <input type="date" id="qa_date" required class="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1">Description</label>
+                <input type="text" id="qa_desc" required placeholder="Ex : Facture d'eau" class="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+            </div>
+            <label class="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" id="qa_tenant" class="w-4 h-4 rounded"> Imputée au locataire (charge récupérable)</label>
+            <button type="submit" id="qa-submit" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-lg flex justify-center items-center gap-2"><i class="fa-solid fa-check"></i> Enregistrer</button>
+        </form>
+    </div>
+
+    <!-- Bouton flottant "+" (mobile) -->
+    <button type="button" id="fab-add" onclick="openQuickAdd()" class="md:hidden fixed right-4 z-20 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/30 flex items-center justify-center text-2xl active:scale-95 transition" style="bottom: calc(4.75rem + env(safe-area-inset-bottom));" aria-label="Ajouter une opération">
+        <i class="fa-solid fa-plus"></i>
+    </button>
+
+    <script type="module" src="js/app.js?v=3"></script>
 </body>
 </html>

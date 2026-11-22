@@ -2,7 +2,7 @@
 // - Fichiers de l'app : réseau d'abord (les mises à jour arrivent tout de suite), cache si hors ligne.
 // - Bibliothèques externes (CDN) : cache, rafraîchi en arrière-plan.
 // - Firebase / Google (données, connexion, Gmail) : jamais mis en cache.
-const CACHE = 'immogerer-v1';
+const CACHE = 'immogerer-v3';
 const APP_SHELL = ['./', './index.html', './css/style.css', './js/app.js', './manifest.webmanifest', './icons/icon-192.png'];
 const CDN_HOSTS = ['cdn.tailwindcss.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'www.gstatic.com'];
 

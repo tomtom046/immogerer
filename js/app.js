@@ -23,30 +23,50 @@ let gmailToken = null;
 const fields = [
     'bailleur_nom', 'bailleur_adresse', 'locataire_nom', 'locataire_email',
     'logement_adresse', 'loyer_base', 'loyer_charges', 'lieu_emission',
-    'caution', 'prix_achat', 'credit_mensualite', 'credit_debut', 'google_client_id'
+    'caution', 'prix_achat', 'credit_mensualite', 'credit_debut', 'credit_capital', 'credit_taux', 'credit_duree', 'google_client_id'
 ];
+const NUMERIC_FIELDS = ['loyer_base', 'loyer_charges', 'caution', 'prix_achat', 'credit_mensualite', 'credit_capital', 'credit_taux', 'credit_duree'];
+let dataLoaded = false;
 let currentSignatureData = '';
 let financeChartInstance = null; 
 let calendarInstance = null;
 
 // Modale de sécurité
-let currentConfirmAction = null;
-window.showConfirmModal = function(title, text, preview, onConfirm) {
+let currentConfirmAction = null, currentExtraAction = null;
+// options : { confirmLabel, confirmIcon, cancelLabel, extraLabel, onExtra, tone: 'warning' | 'success' }
+window.showConfirmModal = function(title, text, preview, onConfirm, options = {}) {
+    const success = options.tone === 'success';
+    document.getElementById('modal-head').className = `flex items-center gap-3 mb-4 border-b border-slate-100 pb-3 ${success ? 'text-green-600' : 'text-red-600'}`;
+    document.getElementById('modal-head-icon').className = `fa-solid ${success ? 'fa-circle-check' : 'fa-triangle-exclamation'} text-2xl`;
     document.getElementById('modal-title').innerText = title;
     document.getElementById('modal-text').innerHTML = text;
     document.getElementById('modal-preview').innerHTML = preview;
+    document.getElementById('modal-preview').classList.toggle('hidden', !preview);
+    document.getElementById('modal-confirm').innerHTML = `<i class="fa-solid ${options.confirmIcon || 'fa-paper-plane'}"></i> ${escapeHtml(options.confirmLabel || "Oui, envoyer l'email")}`;
+    document.getElementById('modal-cancel').innerText = options.cancelLabel || 'Annuler';
+    const extra = document.getElementById('modal-extra');
+    extra.classList.toggle('hidden', !options.extraLabel);
+    extra.innerText = options.extraLabel || '';
+    currentExtraAction = options.onExtra || null;
     currentConfirmAction = onConfirm;
     document.getElementById('email-confirm-modal').classList.remove('hidden');
 };
 window.closeConfirmModal = function() {
     document.getElementById('email-confirm-modal').classList.add('hidden');
-    currentConfirmAction = null;
+    currentConfirmAction = null; currentExtraAction = null;
 };
 document.getElementById('modal-cancel').addEventListener('click', closeConfirmModal);
 document.getElementById('modal-confirm').addEventListener('click', () => {
-    if (currentConfirmAction) currentConfirmAction();
+    const action = currentConfirmAction;
     closeConfirmModal();
+    if (action) action();
 });
+document.getElementById('modal-extra').addEventListener('click', () => {
+    const action = currentExtraAction;
+    closeConfirmModal();
+    if (action) action();
+});
+document.getElementById('email-confirm-modal').addEventListener('click', (e) => { if (e.target.id === 'email-confirm-modal') closeConfirmModal(); });
 
 // Initialisation de l'interface
 const now = new Date();
@@ -114,6 +134,34 @@ function updateAccountUI(user) {
     const mIcon = document.getElementById('mobile-account-icon');
     if (mIcon) mIcon.className = `fa-solid ${isAnon ? 'fa-circle-exclamation text-amber-400' : 'fa-circle-user text-green-400'} text-xl`;
 }
+
+// --- THÈME (automatique / clair / sombre) ---
+const THEMES = { auto: { label: 'Automatique', icon: 'fa-circle-half-stroke' }, light: { label: 'Clair', icon: 'fa-sun' }, dark: { label: 'Sombre', icon: 'fa-moon' } };
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+function getThemeMode() { try { return localStorage.getItem('immogerer-theme') || 'auto'; } catch { return 'auto'; } }
+function applyTheme() {
+    const mode = getThemeMode();
+    const dark = mode === 'dark' || (mode === 'auto' && darkQuery.matches);
+    document.documentElement.classList.toggle('dark', dark);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0b1220' : '#1e293b');
+    document.querySelectorAll('.theme-icon').forEach(i => i.className = i.className.replace(/fa-(circle-half-stroke|sun|moon)/, THEMES[mode].icon));
+    const label = document.getElementById('theme-label');
+    if (label) label.innerText = THEMES[mode].label;
+    if (typeof Chart !== 'undefined') {
+        Chart.defaults.color = dark ? '#cbd5e1' : '#475569';
+        Chart.defaults.borderColor = dark ? 'rgba(148,163,184,.15)' : 'rgba(0,0,0,.08)';
+    }
+    if (dataLoaded) updateDashboard();
+}
+window.cycleTheme = function() {
+    const order = ['auto', 'light', 'dark'];
+    const next = order[(order.indexOf(getThemeMode()) + 1) % order.length];
+    try { localStorage.setItem('immogerer-theme', next); } catch {}
+    applyTheme();
+    showToast(`Thème : ${THEMES[next].label}`);
+};
+darkQuery.addEventListener?.('change', () => { if (getThemeMode() === 'auto') applyTheme(); });
+applyTheme();
 
 // --- MENU TIROIR (mobile) ---
 window.openSidebar = function() {
@@ -205,15 +253,23 @@ if (auth) {
 }
 
 // --- GESTION CATÉGORIES ---
-const defaultCategories = [
-    { value: 'loyer', label: 'Loyer perçu (Locataire)' },
-    { value: 'charge', label: 'Charge récupérable (ex: Eau, TEOM)' },
-    { value: 'charge_immo', label: 'Charge Immobilière globale' },
-    { value: 'taxe_fonciere', label: 'Taxe foncière' },
-    { value: 'csg', label: 'CSG' },
-    { value: 'depense', label: 'Dépense proprio (Assurance, frais)' },
-    { value: 'travaux', label: 'Travaux / Entretien' }
-];
+// Une seule définition par catégorie : libellé, libellé court, icône et couleurs (tableau, calendrier, graphiques)
+const CATEGORIES = {
+    loyer:         { label: 'Loyer perçu (Locataire)',            short: 'Loyer',         icon: 'fa-sack-dollar', color: '#16a34a', badge: 'bg-green-100 text-green-700',     amount: 'text-green-600 font-bold' },
+    charge:        { label: 'Charge récupérable (ex: Eau, TEOM)', short: 'Charge récup.', icon: 'fa-droplet',     color: '#dc2626', badge: 'bg-red-100 text-red-700',         amount: 'text-red-600' },
+    charge_immo:   { label: 'Charge Immobilière globale',         short: 'Copropriété',   icon: 'fa-building',    color: '#c026d3', badge: 'bg-fuchsia-100 text-fuchsia-700', amount: 'text-fuchsia-600' },
+    taxe_fonciere: { label: 'Taxe foncière',                      short: 'Taxe foncière', icon: 'fa-landmark',    color: '#e11d48', badge: 'bg-rose-100 text-rose-700',       amount: 'text-rose-600' },
+    csg:           { label: 'CSG',                                short: 'CSG',           icon: 'fa-percent',     color: '#db2777', badge: 'bg-pink-100 text-pink-700',       amount: 'text-pink-600' },
+    depense:       { label: 'Dépense proprio (Assurance, frais)', short: 'Dépense',       icon: 'fa-receipt',     color: '#475569', badge: 'bg-slate-200 text-slate-700',     amount: 'text-slate-600' },
+    travaux:       { label: 'Travaux / Entretien',                short: 'Travaux',       icon: 'fa-hammer',      color: '#ea580c', badge: 'bg-orange-100 text-orange-700',   amount: 'text-orange-600' }
+};
+const CUSTOM_CATEGORY = { icon: 'fa-tag', color: '#4f46e5', badge: 'bg-indigo-100 text-indigo-700', amount: 'text-slate-600' };
+function catInfo(type) { return CATEGORIES[type] || { ...CUSTOM_CATEGORY, label: type, short: type }; }
+function categoryBadge(type) {
+    const c = catInfo(type);
+    return `<span class="${c.badge} inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold max-w-[140px] align-bottom" title="${escapeHtml(c.label)}"><i class="fa-solid ${c.icon} text-[10px]"></i><span class="truncate">${escapeHtml(c.short)}</span></span>`;
+}
+const defaultCategories = Object.entries(CATEGORIES).map(([value, c]) => ({ value, label: c.label }));
 
 function renderCategories() {
     const select = document.getElementById('trans_type');
@@ -250,7 +306,8 @@ async function loadDataFromCloud() {
         appSettings = docSnap.data();
         fields.forEach(field => {
             if (appSettings[field] !== undefined && document.getElementById(field)) {
-                document.getElementById(field).value = appSettings[field];
+                // Un champ numérique enregistré à 0 était vide : on le réaffiche vide
+                document.getElementById(field).value = (NUMERIC_FIELDS.includes(field) && appSettings[field] === 0) ? '' : appSettings[field];
             }
         });
         if (appSettings.signature_data) {
@@ -271,7 +328,7 @@ async function saveDataToCloud(silent = false) {
         if(document.getElementById(field)) appSettings[field] = document.getElementById(field).value;
     });
     appSettings.signature_data = currentSignatureData;
-    ['loyer_base', 'loyer_charges', 'caution', 'prix_achat', 'credit_mensualite'].forEach(f => {
+    NUMERIC_FIELDS.forEach(f => {
         appSettings[f] = parseFloat(appSettings[f]) || 0;
     });
 
@@ -292,8 +349,10 @@ function setupTransactionsListener() {
     const transRef = collection(db, 'artifacts', appIdentifier, 'users', currentUser.uid, 'transactions');
     unsubscribeTransactions = onSnapshot(transRef, (snapshot) => {
         allTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        allTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+        allTransactions.sort((a, b) => b.date.localeCompare(a.date) || (b.timestamp || '').localeCompare(a.timestamp || ''));
+        dataLoaded = true;
         updateDashboard();
+        refreshFilterOptions();
         renderTransactionsTable();
         if(!document.getElementById('tab-regularisation').classList.contains('hidden')) calculateRegularization();
         if(!document.getElementById('tab-calendrier').classList.contains('hidden')) initOrUpdateCalendar();
@@ -438,8 +497,10 @@ document.getElementById('transaction-form').addEventListener('submit', async (e)
                 });
             }
             await batch.commit();
-            showToast(numIterations > 1 ? `${numIterations} opérations générées avec succès !` : "Opération ajoutée.");
-            cancelEditTransaction(); 
+            cancelEditTransaction();
+            // Un loyer unique qui tombe sur un mois déjà échu : proposer la quittance
+            if (finalType === 'loyer' && numIterations === 1 && startDateStr <= localDateStr()) offerQuittanceAfterLoyer(startDateStr.slice(0, 7));
+            else showToast(numIterations > 1 ? `${numIterations} opérations générées avec succès !` : "Opération ajoutée.");
         }
     } catch (error) {
         showToast("Erreur lors de l'opération", true);
@@ -449,13 +510,68 @@ document.getElementById('transaction-form').addEventListener('submit', async (e)
     }
 });
 
+// --- AJOUT RAPIDE (bouton "+") ---
+let quickAddType = 'charge';
+function renderQuickAddTypes() {
+    const types = Object.keys(CATEGORIES);
+    document.getElementById('qa-types').innerHTML = types.map(t => {
+        const c = CATEGORIES[t], active = t === quickAddType;
+        return `<button type="button" onclick="selectQuickAddType('${t}')" class="flex flex-col items-center justify-center gap-1 p-2 rounded-lg border text-[11px] font-semibold leading-tight transition ${active ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}">
+            <i class="fa-solid ${c.icon} text-base" style="color:${c.color}"></i>${escapeHtml(c.short)}</button>`;
+    }).join('') + `<button type="button" onclick="closeQuickAdd(); switchTab('finances'); document.getElementById('trans_type').value='autre'; toggleCustomType(); document.getElementById('trans_type_custom').focus()" class="flex flex-col items-center justify-center gap-1 p-2 rounded-lg border border-dashed border-slate-300 text-[11px] font-semibold text-slate-500 hover:bg-slate-50"><i class="fa-solid fa-ellipsis text-base"></i>Autre…</button>`;
+}
+window.selectQuickAddType = function(t) {
+    quickAddType = t;
+    document.getElementById('qa_tenant').checked = (t === 'charge' || t === 'loyer');
+    renderQuickAddTypes();
+};
+window.openQuickAdd = function() {
+    if (!currentUser) return;
+    document.getElementById('quickadd-form').reset();
+    document.getElementById('qa_date').value = localDateStr();
+    selectQuickAddType('charge');
+    document.getElementById('quickadd-modal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('qa_amount').focus(), 100);
+};
+window.closeQuickAdd = function() { document.getElementById('quickadd-modal').classList.add('hidden'); };
+
+document.getElementById('quickadd-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!currentUser) return;
+    const amount = parseFloat(document.getElementById('qa_amount').value);
+    if (!(amount > 0)) { showToast("Saisissez un montant.", true); return; }
+    const date = document.getElementById('qa_date').value, desc = document.getElementById('qa_desc').value.trim();
+    const btn = document.getElementById('qa-submit');
+    btn.disabled = true;
+    try {
+        await addDoc(collection(db, 'artifacts', appIdentifier, 'users', currentUser.uid, 'transactions'), {
+            type: quickAddType, date, amount, desc,
+            assigned: document.getElementById('qa_tenant').checked ? 'locataire' : 'proprietaire',
+            timestamp: new Date().toISOString()
+        });
+        closeQuickAdd();
+        if (quickAddType === 'loyer') offerQuittanceAfterLoyer(date.slice(0, 7));
+        else showToast("Opération ajoutée.");
+    } catch (err) { showToast("Erreur lors de l'ajout.", true); }
+    finally { btn.disabled = false; }
+});
+
 window.deleteTransaction = async function(id) {
     if (!currentUser) return;
     const t = allTransactions.find(x => x.id === id);
-    if (!confirm(`Supprimer définitivement cette opération ?\n\n${t ? `${formatDateFr(t.date)} —${t.desc} — ${formatMontant(t.amount)}` : ''}`)) return;
+    if (!t) return;
+    const ref = doc(db, 'artifacts', appIdentifier, 'users', currentUser.uid, 'transactions', id);
+    const { id: _ignored, ...backup } = t;
     try {
-        await deleteDoc(doc(db, 'artifacts', appIdentifier, 'users', currentUser.uid, 'transactions', id));
-        showToast("Opération supprimée");
+        await deleteDoc(ref);
+        // Pas de confirmation : on propose plutôt d'annuler pendant quelques secondes
+        showToast(`« ${t.desc} » supprimée`, false, {
+            label: 'Annuler', duration: 8000,
+            onClick: async () => {
+                try { await setDoc(ref, backup); showToast("Opération restaurée."); }
+                catch { showToast("Impossible de restaurer l'opération.", true); }
+            }
+        });
     } catch (error) { showToast("Erreur suppression", true); }
 };
 
@@ -476,15 +592,32 @@ window.autoGenerateLoyer = async function() {
         await addDoc(collection(db, 'artifacts', appIdentifier, 'users', currentUser.uid, 'transactions'), {
             type: 'loyer', date: todayStr, amount: loyerTotal, desc: `Loyer encaissé - ${monthName} ${date.getFullYear()}`, assigned: 'locataire', timestamp: new Date().toISOString()
         });
-        showToast("Loyer du mois ajouté !");
+        offerQuittanceAfterLoyer(todayStr.slice(0, 7));
     } catch (error) { showToast("Erreur lors de l'ajout automatique", true); }
+}
+
+// Après l'encaissement d'un loyer : proposer d'envoyer (ou de télécharger) la quittance du mois
+function offerQuittanceAfterLoyer(monthKey) {
+    const email = document.getElementById('locataire_email').value;
+    const canEmail = email && document.getElementById('google_client_id').value;
+    showConfirmModal(
+        "Loyer enregistré",
+        `Le loyer de <strong>${monthLabel(monthKey)}</strong> est enregistré. ${canEmail ? `Envoyer la quittance à <strong>${escapeHtml(email)}</strong> ?` : 'Voulez-vous la quittance ?'}`,
+        canEmail ? `<i class="fa-solid fa-circle-info text-blue-500 mr-1"></i> Un aperçu de l'email vous sera montré avant l'envoi.`
+                 : `<i class="fa-solid fa-circle-info text-blue-500 mr-1"></i> Pour l'envoyer par email, renseignez l'email du locataire et l'ID client Google dans « Bail & Locataire ».`,
+        canEmail ? () => sendQuittanceFor(monthKey) : () => openQuittanceFor(monthKey),
+        { confirmLabel: canEmail ? 'Envoyer la quittance' : 'Voir la quittance', confirmIcon: canEmail ? 'fa-paper-plane' : 'fa-file-pdf', cancelLabel: 'Plus tard',
+          extraLabel: canEmail ? 'Voir la quittance' : null, onExtra: () => openQuittanceFor(monthKey), tone: 'success' }
+    );
 }
 
 // --- Export CSV & JSON ---
 window.exportCSV = function() {
-    if (allTransactions.length === 0) { showToast("Aucune donnée à exporter.", true); return; }
+    // Exporte ce qui est affiché (filtres compris)
+    const rows = getFilteredTransactions();
+    if (rows.length === 0) { showToast("Aucune donnée à exporter.", true); return; }
     let csvContent = "Date;Type d'opération;Assigné à;Description;Montant (€)\n";
-    allTransactions.forEach(t => {
+    rows.forEach(t => {
         const dateFormatee = formatDateFr(t.date);
         const descFormatee = `"${t.desc.replace(/"/g, '""')}"`;
         const amountFormate = t.amount.toString().replace('.', ',');
@@ -565,47 +698,48 @@ function updateDashboard() {
         if (t.date.startsWith(anneeCourante) && t.type !== 'loyer') depensesAnneeReelles += t.amount;
     });
 
-    const mensualiteCredit = parseFloat(document.getElementById('credit_mensualite')?.value) || 0;
-    
+    const credit = getCreditParams();
+    const mensualiteCredit = credit.mensualite;
+
     // Nombre de mensualités déjà payées : depuis la date de début du crédit si elle est renseignée,
-    // sinon (ancien comportement) depuis la première opération enregistrée.
-    const creditDebut = document.getElementById('credit_debut')?.value || '';
-    const startKey = creditDebut || (hasPastTransactions ? minDate.slice(0, 7) : '');
-    let monthsPassed = 0;
-    if (startKey) {
-        const [y0, m0] = startKey.split('-').map(Number);
-        const dToday = new Date();
-        monthsPassed = Math.max(0, (dToday.getFullYear() - y0) * 12 + (dToday.getMonth() + 1 - m0) + 1);
-    }
+    // sinon (ancien comportement) depuis la première opération enregistrée. Plafonné à la durée du prêt.
+    const startKey = credit.debut || (hasPastTransactions ? minDate.slice(0, 7) : '');
+    let monthsPassed = monthsElapsed(startKey);
+    if (credit.n > 0) monthsPassed = Math.min(monthsPassed, credit.n);
     const totalCreditHistorique = monthsPassed * mensualiteCredit;
 
     // Déduction du crédit dans le solde global
     const solde = totalLoyers - (totalCharges + totalTravaux + totalDepenses + totalCreditHistorique);
-    
-    document.getElementById('stat-loyers').innerText = formatMontant(totalLoyers);
-    document.getElementById('stat-charges').innerText = formatMontant(totalCharges);
-    document.getElementById('stat-travaux').innerText = formatMontant(totalTravaux);
-    
+
+    document.getElementById('stat-loyers').innerText = formatMontantCourt(totalLoyers);
+    document.getElementById('stat-charges').innerText = formatMontantCourt(totalCharges);
+    document.getElementById('stat-travaux').innerText = formatMontantCourt(totalTravaux);
+
     const elSolde = document.getElementById('stat-solde');
-    elSolde.innerText = formatMontant(solde);
+    elSolde.innerText = formatMontantCourt(solde);
     elSolde.className = solde >= 0 ? "text-lg sm:text-2xl font-bold text-green-600" : "text-lg sm:text-2xl font-bold text-red-600";
+    if (dataLoaded) document.querySelectorAll('.skeleton').forEach(el => el.classList.remove('skeleton'));
 
     const dashList = document.getElementById('dash-transactions-list');
     dashList.innerHTML = '';
-    
+
     // On ne garde que les opérations passées ou d'aujourd'hui pour la liste récente
     const pastTransactions = allTransactions.filter(t => t.date <= todayStr);
     const recent = pastTransactions.slice(0, 5);
-    
-    if (recent.length === 0) dashList.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500">Aucune opération.</td></tr>`;
+
+    if (recent.length === 0) dashList.innerHTML = emptyStateRow(4, dataLoaded ? "Aucune opération pour l'instant" : 'Chargement…', dataLoaded);
     else recent.forEach(t => dashList.appendChild(createTransactionRow(t, false)));
+
+    renderCredit(credit);
 
     const prixAchat = parseFloat(document.getElementById('prix_achat')?.value) || 0;
     const loyerTotalMensuelAttendu = (parseFloat(document.getElementById('loyer_base')?.value) || 0) + (parseFloat(document.getElementById('loyer_charges')?.value) || 0);
     
+    renderMonthCard(loyerTotalMensuelAttendu);
+
     const cashflow = loyerTotalMensuelAttendu - mensualiteCredit;
     const elCash = document.getElementById('stat-cashflow');
-    elCash.innerText = formatMontant(cashflow);
+    elCash.innerText = formatMontantCourt(cashflow);
     elCash.className = cashflow >= 0 ? "text-2xl font-bold text-purple-900" : "text-2xl font-bold text-red-600";
 
     if (prixAchat > 0 && loyerTotalMensuelAttendu > 0) {
@@ -618,6 +752,166 @@ function updateDashboard() {
         document.getElementById('stat-renta-nette').innerText = "0.00 %";
     }
     renderChart(anneeCourante, mensualiteCredit, todayStr);
+}
+
+// --- CRÉDIT IMMOBILIER (amortissement) ---
+function getCreditParams() {
+    const v = id => parseFloat(document.getElementById(id)?.value) || 0;
+    const capital = v('credit_capital'), taux = v('credit_taux'), n = Math.round(v('credit_duree') * 12);
+    const debut = document.getElementById('credit_debut')?.value || '', saisie = v('credit_mensualite');
+    let paiementCalcule = 0;
+    if (capital > 0 && n > 0) {
+        const r = taux / 100 / 12;
+        paiementCalcule = r > 0 ? capital * r / (1 - Math.pow(1 + r, -n)) : capital / n;
+    }
+    // La mensualité saisie (souvent assurance comprise) reste prioritaire pour le cashflow
+    return { capital, taux, n, debut, saisie, paiementCalcule, mensualite: saisie || paiementCalcule };
+}
+
+// Nombre de mois écoulés depuis "YYYY-MM" (mois en cours inclus)
+function monthsElapsed(startKey) {
+    if (!startKey) return 0;
+    const [y0, m0] = startKey.split('-').map(Number);
+    const d = new Date();
+    return Math.max(0, (d.getFullYear() - y0) * 12 + (d.getMonth() + 1 - m0) + 1);
+}
+
+function creditSchedule(p) {
+    const rows = [], r = p.taux / 100 / 12;
+    const [y0, m0] = p.debut.split('-').map(Number);
+    let remaining = p.capital;
+    for (let k = 0; k < p.n; k++) {
+        const interest = remaining * r;
+        let principal = p.paiementCalcule - interest;
+        if (k === p.n - 1) principal = remaining; // dernière échéance : solde exact
+        remaining = Math.max(0, remaining - principal);
+        const d = new Date(y0, m0 - 1 + k, 1);
+        rows.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, year: d.getFullYear(), interest, principal, remaining });
+    }
+    return rows;
+}
+
+function renderCredit(p) {
+    const ready = p.capital > 0 && p.n > 0 && p.debut;
+    document.getElementById('credit-empty').classList.toggle('hidden', ready);
+    document.getElementById('credit-content').classList.toggle('hidden', !ready);
+    if (!ready) { document.getElementById('credit-end').innerText = ''; return; }
+
+    const rows = creditSchedule(p);
+    const paidCount = Math.min(monthsElapsed(p.debut), p.n);
+    const remaining = paidCount > 0 ? rows[paidCount - 1].remaining : p.capital;
+    const repaid = p.capital - remaining;
+    const year = new Date().getFullYear();
+    const interestYear = rows.filter(r => r.year === year).reduce((s, r) => s + r.interest, 0);
+    const pct = p.capital > 0 ? (repaid / p.capital) * 100 : 0;
+    const last = rows[rows.length - 1];
+    const [ly, lm] = last.key.split('-').map(Number);
+
+    document.getElementById('credit-remaining').innerText = formatMontantCourt(Math.round(remaining));
+    document.getElementById('credit-repaid').innerText = formatMontantCourt(Math.round(repaid));
+    document.getElementById('credit-interest-label').innerText = `Intérêts ${year}`;
+    document.getElementById('credit-interest-year').innerText = formatMontantCourt(Math.round(interestYear));
+    document.getElementById('credit-payment').innerText = formatMontant(p.paiementCalcule);
+    document.getElementById('credit-progress').style.width = pct.toFixed(1) + '%';
+    document.getElementById('credit-progress-label').innerText = pct.toFixed(1).replace('.', ',') + ' %';
+    document.getElementById('credit-end').innerText = `Dernière échéance : ${new Date(ly, lm - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}`;
+
+    const byYear = {};
+    rows.forEach(r => {
+        byYear[r.year] = byYear[r.year] || { interest: 0, principal: 0, remaining: 0 };
+        byYear[r.year].interest += r.interest; byYear[r.year].principal += r.principal; byYear[r.year].remaining = r.remaining;
+    });
+    document.getElementById('credit-table').innerHTML = Object.entries(byYear).map(([y, v]) => `
+        <tr class="${Number(y) === year ? 'bg-blue-50 font-semibold' : ''}">
+            <td class="p-2 sm:p-3 text-left">${y}${Number(y) === year ? ' <span class="text-[10px] text-blue-600">(en cours)</span>' : ''}</td>
+            <td class="p-2 sm:p-3 text-amber-700">${formatMontantCourt(Math.round(v.interest))}</td>
+            <td class="p-2 sm:p-3 text-blue-700">${formatMontantCourt(Math.round(v.principal))}</td>
+            <td class="p-2 sm:p-3 text-slate-700">${formatMontantCourt(Math.round(v.remaining))}</td>
+        </tr>`).join('');
+}
+
+// --- CARTE "CE MOIS-CI" ---
+function loyerPaidForMonth(monthKey) {
+    return allTransactions.filter(t => t.type === 'loyer' && t.date.startsWith(monthKey)).reduce((s, t) => s + t.amount, 0);
+}
+function monthLabel(monthKey) {
+    const [y, m] = monthKey.split('-').map(Number);
+    return capitalize(new Date(y, m - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }));
+}
+
+function renderMonthCard(expected) {
+    const todayStr = localDateStr(), monthKey = todayStr.slice(0, 7);
+    const paid = loyerPaidForMonth(monthKey);
+    const isPaid = expected > 0 && paid >= expected - 0.005;
+
+    document.getElementById('month-title').innerText = monthLabel(monthKey);
+    document.getElementById('month-paid').innerText = formatMontantCourt(paid);
+    document.getElementById('month-expected').innerText = expected > 0 ? formatMontantCourt(expected) : 'non configuré';
+    document.getElementById('month-progress').style.width = (expected > 0 ? Math.min(100, paid / expected * 100) : 0) + '%';
+
+    const status = document.getElementById('month-status');
+    let statusText, statusClass;
+    if (!dataLoaded) { statusText = '…'; statusClass = 'bg-white/10'; }
+    else if (expected <= 0) { statusText = 'Loyer à configurer'; statusClass = 'bg-white/10 text-slate-200'; }
+    else if (isPaid) { statusText = '✓ Loyer payé'; statusClass = 'bg-green-400/20 text-green-200'; }
+    else if (paid > 0) { statusText = 'Paiement partiel'; statusClass = 'bg-amber-400/20 text-amber-200'; }
+    else { statusText = 'Loyer en attente'; statusClass = 'bg-amber-400/20 text-amber-200'; }
+    status.innerText = statusText;
+    status.className = `text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap ${statusClass}`;
+
+    // Dépenses du mois (passées) + prévues d'ici la fin du mois
+    const monthOps = allTransactions.filter(t => t.type !== 'loyer' && t.date.startsWith(monthKey));
+    const spent = monthOps.filter(t => t.date <= todayStr).reduce((s, t) => s + t.amount, 0);
+    const planned = monthOps.filter(t => t.date > todayStr).reduce((s, t) => s + t.amount, 0);
+    document.getElementById('month-expenses').innerText = formatMontantCourt(spent);
+    document.getElementById('month-expenses-detail').innerText = planned > 0 ? `+ ${formatMontantCourt(planned)} prévus d'ici la fin du mois` : `${monthOps.filter(t => t.date <= todayStr).length} opération(s)`;
+
+    // Prochaine échéance = prochaine opération datée dans le futur
+    const next = allTransactions.filter(t => t.date > todayStr).sort((a, b) => a.date.localeCompare(b.date))[0];
+    if (next) {
+        const days = Math.round((new Date(next.date + 'T00:00:00') - new Date(todayStr + 'T00:00:00')) / 86400000);
+        document.getElementById('month-next').innerHTML = `<i class="fa-solid ${catInfo(next.type).icon} text-blue-300 mr-1"></i>${escapeHtml(next.desc)} · ${formatMontantCourt(next.amount)}`;
+        document.getElementById('month-next-date').innerText = `${formatDateFr(next.date)} · ${days <= 1 ? (days === 1 ? 'demain' : "aujourd'hui") : `dans ${days} jours`}`;
+    } else {
+        document.getElementById('month-next').innerText = 'Aucune opération prévue';
+        document.getElementById('month-next-date').innerHTML = '<span class="opacity-75">Astuce : utilisez « Répéter tous les mois »</span>';
+    }
+
+    // Alertes : loyers manquants ou partiels sur les 6 derniers mois (depuis le premier loyer enregistré)
+    const alerts = [];
+    const firstLoyer = allTransactions.filter(t => t.type === 'loyer').map(t => t.date).sort()[0];
+    if (expected > 0 && firstLoyer) {
+        const missing = [];
+        const d = new Date(); d.setDate(1);
+        for (let i = 1; i <= 6; i++) {
+            const m = new Date(d.getFullYear(), d.getMonth() - i, 1);
+            const key = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`;
+            if (key < firstLoyer.slice(0, 7)) break;
+            const p = loyerPaidForMonth(key);
+            if (p < expected - 0.005) missing.push(`${monthLabel(key)}${p > 0 ? ` (${formatMontantCourt(p)} reçus)` : ''}`);
+        }
+        if (missing.length) alerts.push({ icon: 'fa-triangle-exclamation', cls: 'bg-red-500/20 text-red-100 border-red-400/30', text: `Loyer incomplet ou non reçu : ${missing.join(', ')}`, action: `<button type="button" onclick="sendRelanceEmail()" class="underline font-semibold whitespace-nowrap">Relancer</button>` });
+    }
+    document.getElementById('month-alerts').innerHTML = alerts.map(a => `
+        <div class="flex items-start gap-2 text-sm rounded-lg border px-3 py-2 ${a.cls}">
+            <i class="fa-solid ${a.icon} mt-0.5"></i><span class="flex-1">${escapeHtml(a.text)}</span>${a.action || ''}
+        </div>`).join('');
+
+    // Actions rapides
+    const btn = (label, icon, onclick, primary) => `<button type="button" onclick="${onclick}" class="${primary ? 'bg-green-500 hover:bg-green-600 text-white' : 'bg-white/10 hover:bg-white/20 text-white'} text-sm font-semibold py-2 px-3 rounded-lg flex items-center gap-2 transition"><i class="fa-solid ${icon}"></i>${label}</button>`;
+    let actions = '';
+    if (expected > 0 && !isPaid) actions += btn('Encaisser le loyer', 'fa-bolt', 'autoGenerateLoyer()', true);
+    if (paid > 0) actions += btn('Aperçu quittance', 'fa-file-pdf', `openQuittanceFor('${monthKey}')`) + btn('Envoyer la quittance', 'fa-paper-plane', `sendQuittanceFor('${monthKey}')`);
+    actions += btn('Opération', 'fa-plus', 'openQuickAdd()');
+    document.getElementById('month-actions').innerHTML = dataLoaded ? actions : '';
+}
+
+function emptyStateRow(colspan, message, withButton) {
+    return `<tr><td colspan="${colspan}" class="p-8 text-center text-slate-500">
+        <i class="fa-regular fa-folder-open text-3xl text-slate-300 mb-2 block"></i>
+        <p class="font-medium">${escapeHtml(message)}</p>
+        ${withButton ? `<button type="button" onclick="openQuickAdd()" class="mt-3 text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg"><i class="fa-solid fa-plus mr-1"></i> Ajouter une opération</button>` : ''}
+    </td></tr>`;
 }
 
 function renderChart(annee, mensualiteCredit, todayStr) {
@@ -656,17 +950,10 @@ function initOrUpdateCalendar() {
     const calendarEl = document.getElementById('calendar');
     if (!calendarEl) return;
 
-    const eventsData = allTransactions.map(t => {
-        let eventColor = '#64748b'; 
-        if (t.type === 'loyer') eventColor = '#22c55e'; 
-        else if (t.type === 'charge') eventColor = '#ef4444';
-        else if (t.type === 'charge_immo') eventColor = '#d946ef'; 
-        else if (t.type === 'taxe_fonciere') eventColor = '#f43f5e'; 
-        else if (t.type === 'csg') eventColor = '#ec4899'; 
-        else if (t.type === 'travaux') eventColor = '#f97316'; 
-
-        return { title: `${t.type === 'loyer' ? '+' : '-'}${t.amount}€ | ${t.desc}`, start: t.date, color: eventColor, allDay: true };
-    });
+    const eventsData = allTransactions.map(t => ({
+        title: `${t.type === 'loyer' ? '+' : '-'}${formatMontantCourt(t.amount)} | ${t.desc}`,
+        start: t.date, color: catInfo(t.type).color, allDay: true
+    }));
 
     if (!calendarInstance) {
         calendarInstance = new FullCalendar.Calendar(calendarEl, {
@@ -687,26 +974,64 @@ function initOrUpdateCalendar() {
     }
 }
 
+// --- RECHERCHE & FILTRES ---
+function refreshFilterOptions() {
+    const yearSel = document.getElementById('filter_year'), typeSel = document.getElementById('filter_type');
+    const keepY = yearSel.value, keepT = typeSel.value;
+    const years = [...new Set(allTransactions.map(t => t.date.slice(0, 4)))].sort().reverse();
+    yearSel.innerHTML = '<option value="">Toutes les années</option>' + years.map(y => `<option value="${y}">${y}</option>`).join('');
+    const types = [...new Set(allTransactions.map(t => t.type))];
+    typeSel.innerHTML = '<option value="">Toutes catégories</option>' + types.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(catInfo(t).short)}</option>`).join('');
+    if (years.includes(keepY)) yearSel.value = keepY;
+    if (types.includes(keepT)) typeSel.value = keepT;
+}
+
+function getFilteredTransactions() {
+    const text = (document.getElementById('filter_text')?.value || '').trim().toLowerCase();
+    const year = document.getElementById('filter_year')?.value || '';
+    const type = document.getElementById('filter_type')?.value || '';
+    return allTransactions.filter(t => {
+        if (year && !t.date.startsWith(year)) return false;
+        if (type && t.type !== type) return false;
+        if (text) {
+            const hay = `${t.desc} ${catInfo(t.type).short} ${t.amount} ${String(t.amount).replace('.', ',')} ${formatDateFr(t.date)}`.toLowerCase();
+            if (!hay.includes(text)) return false;
+        }
+        return true;
+    });
+}
+const isFiltered = () => ['filter_text', 'filter_year', 'filter_type'].some(id => document.getElementById(id)?.value);
+
+window.resetFilters = function() {
+    ['filter_text', 'filter_year', 'filter_type'].forEach(id => document.getElementById(id).value = '');
+    renderTransactionsTable();
+};
+
 function renderTransactionsTable() {
     const list = document.getElementById('full-transactions-list');
+    const rows = getFilteredTransactions();
     list.innerHTML = '';
-    if (allTransactions.length === 0) list.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500">Aucune opération.</td></tr>`;
-    else allTransactions.forEach(t => list.appendChild(createTransactionRow(t, true)));
+    if (rows.length === 0) {
+        list.innerHTML = allTransactions.length === 0
+            ? emptyStateRow(5, dataLoaded ? "Aucune opération pour l'instant" : 'Chargement…', dataLoaded)
+            : `<tr><td colspan="5" class="p-6 text-center text-slate-500">Aucun résultat. <button type="button" onclick="resetFilters()" class="text-blue-600 underline">Effacer les filtres</button></td></tr>`;
+    } else rows.forEach(t => list.appendChild(createTransactionRow(t, true)));
+
+    const inc = rows.filter(t => t.type === 'loyer').reduce((s, t) => s + t.amount, 0);
+    const out = rows.filter(t => t.type !== 'loyer').reduce((s, t) => s + t.amount, 0);
+    const bal = inc - out;
+    document.getElementById('filter-summary').innerHTML = `
+        <span class="font-semibold text-slate-700">${rows.length} opération${rows.length > 1 ? 's' : ''}${isFiltered() ? ` <button type="button" onclick="resetFilters()" class="ml-1 text-blue-600 font-normal underline">effacer</button>` : ''}</span>
+        <span class="text-green-600">Entrées <strong>+${formatMontantCourt(inc)}</strong></span>
+        <span class="text-red-600">Sorties <strong>-${formatMontantCourt(out)}</strong></span>
+        <span class="${bal >= 0 ? 'text-blue-700' : 'text-red-700'}">Solde <strong>${formatMontantCourt(bal)}</strong></span>`;
 }
+window.renderTransactionsTable = renderTransactionsTable;
 
 function createTransactionRow(t, isFullTable) {
     const tr = document.createElement('tr');
-    let typeBadge, amountColor;
     const sign = (t.type === 'loyer') ? '+' : '-';
-
-    if (t.type === 'loyer') { typeBadge = '<span class="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">Loyer</span>'; amountColor = 'text-green-600 font-bold'; }
-    else if (t.type === 'charge') { typeBadge = '<span class="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold">Charge R.</span>'; amountColor = 'text-red-600'; }
-    else if (t.type === 'charge_immo') { typeBadge = '<span class="bg-fuchsia-100 text-fuchsia-700 px-2 py-1 rounded text-xs font-bold">Charge Immo.</span>'; amountColor = 'text-fuchsia-600'; }
-    else if (t.type === 'taxe_fonciere') { typeBadge = '<span class="bg-rose-100 text-rose-700 px-2 py-1 rounded text-xs font-bold">Taxe Fonc.</span>'; amountColor = 'text-rose-600'; }
-    else if (t.type === 'csg') { typeBadge = '<span class="bg-pink-100 text-pink-700 px-2 py-1 rounded text-xs font-bold">CSG</span>'; amountColor = 'text-pink-600'; }
-    else if (t.type === 'travaux') { typeBadge = '<span class="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold">Travaux</span>'; amountColor = 'text-orange-600'; }
-    else if (t.type === 'depense') { typeBadge = '<span class="bg-slate-200 text-slate-700 px-2 py-1 rounded text-xs font-bold">Dépense</span>'; amountColor = 'text-slate-600'; }
-    else { const ty = escapeHtml(t.type); typeBadge = `<span class="bg-indigo-100 text-indigo-700 px-2 py-1 rounded text-xs font-bold uppercase truncate max-w-[120px] inline-block align-bottom" title="${ty}">${ty}</span>`; amountColor = 'text-slate-600'; }
+    const typeBadge = categoryBadge(t.type), amountColor = catInfo(t.type).amount;
 
     // Badge d'assignation
     const assigneeBadge = (t.assigned === 'locataire') 
@@ -719,6 +1044,7 @@ function createTransactionRow(t, isFullTable) {
     if (isFullTable) {
         actionHtml = `
             <div class="flex flex-col sm:flex-row justify-center items-center gap-0 sm:gap-1">
+                ${t.type === 'loyer' ? `<button onclick="openQuittanceFor('${t.date.slice(0, 7)}')" class="text-red-500 hover:text-red-700 p-2 rounded hover:bg-red-50 transition" title="Quittance de ce mois"><i class="fa-solid fa-file-pdf"></i></button>` : ''}
                 <button onclick="editTransaction('${t.id}')" class="text-blue-500 hover:text-blue-700 p-2 rounded hover:bg-blue-50 transition" title="Modifier"><i class="fa-solid fa-pen"></i></button>
                 <button onclick="duplicateTransaction('${t.id}')" class="text-emerald-500 hover:text-emerald-700 p-2 rounded hover:bg-emerald-50 transition" title="Dupliquer"><i class="fa-solid fa-copy"></i></button>
                 <button onclick="deleteTransaction('${t.id}')" class="text-red-500 hover:text-red-700 p-2 rounded hover:bg-red-50 transition" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
@@ -726,10 +1052,10 @@ function createTransactionRow(t, isFullTable) {
     }
 
     tr.innerHTML = `
-        <td class="p-2 sm:p-3 text-slate-700 whitespace-nowrap text-xs sm:text-sm">${displayDate}</td>
+        <td class="p-2 sm:p-3 text-slate-700 whitespace-nowrap text-xs sm:text-sm"><span class="sm:hidden">${displayDate.slice(0, 6) + displayDate.slice(8)}</span><span class="hidden sm:inline">${displayDate}</span></td>
         <td class="p-3 hidden sm:table-cell">${typeBadge}</td>
         <td class="p-2 sm:p-3 text-slate-700 font-medium leading-tight break-words"><div class="sm:hidden mb-1">${typeBadge}</div>${escapeHtml(t.desc)}<br>${assigneeBadge}</td>
-        <td class="p-2 sm:p-3 text-right whitespace-nowrap ${amountColor}">${sign} ${formatMontant(t.amount)}</td>
+        <td class="p-2 sm:p-3 text-right whitespace-nowrap ${amountColor}">${sign}&nbsp;${formatMontantCourt(t.amount)}</td>
         ${isFullTable ? `<td class="p-1 sm:p-3 text-center">${actionHtml}</td>` : ''}
     `;
     return tr;
@@ -802,17 +1128,34 @@ function showSignaturePreview(src) {
     img.src = src; img.classList.remove('hidden'); placeholder.classList.add('hidden');
 }
 
-function showToast(message, isError = false) {
-    const toast = document.getElementById('toast'), icon = document.getElementById('toast-icon');
+let toastTimer = null;
+// action (facultatif) : { label, onClick, duration }
+function showToast(message, isError = false, action = null) {
+    const toast = document.getElementById('toast'), icon = document.getElementById('toast-icon'), btn = document.getElementById('toast-action');
     document.getElementById('toast-msg').innerText = message;
-    
-    if (isError) { toast.className = "hidden opacity-0 transition-opacity duration-300 fixed top-6 right-6 px-4 py-3 rounded-lg font-medium text-sm flex items-center gap-2 shadow-lg bg-red-100 text-red-800 border border-red-200 z-50"; icon.className = "fa-solid fa-circle-exclamation"; } 
-    else { toast.className = "hidden opacity-0 transition-opacity duration-300 fixed top-6 right-6 px-4 py-3 rounded-lg font-medium text-sm flex items-center gap-2 shadow-lg bg-green-100 text-green-800 border border-green-200 z-50"; icon.className = "fa-solid fa-check-circle"; }
+    const base = "opacity-0 transition-opacity duration-300 fixed top-6 right-6 px-4 py-3 rounded-lg font-medium text-sm flex items-center gap-2 shadow-lg z-[110] border";
+    if (isError) { toast.className = `${base} bg-red-100 text-red-800 border-red-200`; icon.className = "fa-solid fa-circle-exclamation"; }
+    else { toast.className = `${base} bg-green-100 text-green-800 border-green-200`; icon.className = "fa-solid fa-check-circle"; }
 
-    toast.classList.remove('hidden'); void toast.offsetWidth; toast.classList.remove('opacity-0'); toast.classList.add('opacity-100');
-    setTimeout(() => { toast.classList.remove('opacity-100'); toast.classList.add('opacity-0'); setTimeout(() => toast.classList.add('hidden'), 300); }, 5000);
+    btn.classList.toggle('hidden', !action);
+    btn.innerText = action ? action.label : '';
+    btn.onclick = action ? () => { hideToast(); action.onClick(); } : null;
+
+    clearTimeout(toastTimer);
+    void toast.offsetWidth; toast.classList.remove('opacity-0'); toast.classList.add('opacity-100');
+    toastTimer = setTimeout(hideToast, action?.duration || 5000);
+}
+function hideToast() {
+    const toast = document.getElementById('toast');
+    toast.classList.remove('opacity-100'); toast.classList.add('opacity-0');
+    toastTimer = setTimeout(() => toast.classList.add('hidden'), 300);
 }
 
+// Montant sans décimales quand elles sont nulles (750 € plutôt que 750,00 €)
+function formatMontantCourt(montant) {
+    const entier = Math.abs(montant - Math.round(montant)) < 0.005;
+    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: entier ? 0 : 2, maximumFractionDigits: 2 }).format(montant);
+}
 function formatMontant(montant) { return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(montant); }
 function capitalize(str) { return str.charAt(0).toUpperCase() + str.slice(1); }
 // Date au format YYYY-MM-DD en heure locale (toISOString() est en UTC et décale la date la nuit)
@@ -836,6 +1179,7 @@ function buildQuittances() {
         lieu_emission: escapeHtml(document.getElementById('lieu_emission').value || '...'), signature: currentSignatureData
     };
     data.total = data.loyer_base + data.loyer_charges;
+    data.initiales = escapeHtml((document.getElementById('bailleur_nom').value || 'B').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase());
     const dateDebut = document.getElementById('date_debut').value, dateFin = document.getElementById('date_fin').value;
 
     if (!dateDebut || !dateFin) { showToast("Sélectionnez une période valide.", true); return null; }
@@ -864,13 +1208,12 @@ function buildQuittances() {
         const isFull = paid >= data.total - 0.005;
         isFull ? result.full++ : result.partial++;
         const docTitle = isFull ? 'Quittance de Loyer' : 'Reçu de paiement partiel';
-        const detailHtml = isFull
-            ? `<tr><td style="padding: 8px 0;">Loyer de base</td><td style="padding: 8px 0; text-align: right;">${formatMontant(data.loyer_base)}</td></tr>
-               <tr><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">Provisions pour charges</td><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; text-align: right;">${formatMontant(data.loyer_charges)}</td></tr>
-               <tr><td style="padding: 12px 0; font-weight: bold; font-size: 18px;">Total reçu</td><td style="padding: 12px 0; font-weight: bold; font-size: 18px; text-align: right; color: #2563eb;">${formatMontant(paid)}</td></tr>`
-            : `<tr><td style="padding: 8px 0;">Montant dû (loyer + charges)</td><td style="padding: 8px 0; text-align: right;">${formatMontant(data.total)}</td></tr>
-               <tr><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">Montant reçu</td><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; text-align: right;">${formatMontant(paid)}</td></tr>
-               <tr><td style="padding: 12px 0; font-weight: bold; font-size: 18px;">Reste dû</td><td style="padding: 12px 0; font-weight: bold; font-size: 18px; text-align: right; color: #dc2626;">${formatMontant(data.total - paid)}</td></tr>`;
+        const row = (label, value, opts = {}) => `<tr style="${opts.bg ? `background:${opts.bg};` : ''}">
+            <td style="padding:11px 14px; color:${opts.color || '#334155'}; ${opts.bold ? 'font-weight:700; font-size:15px;' : ''} border-bottom:1px solid #f1f5f9;">${label}</td>
+            <td style="padding:11px 14px; text-align:right; color:${opts.color || '#0f172a'}; ${opts.bold ? 'font-weight:800; font-size:16px;' : 'font-weight:600;'} border-bottom:1px solid #f1f5f9;">${value}</td></tr>`;
+        const detailHtml = `<tr><th colspan="2" style="text-align:left; padding:0 14px 8px; font-size:11px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:1px; border-bottom:2px solid #e2e8f0;">Détail du règlement</th></tr>` + (isFull
+            ? row('Loyer hors charges', formatMontant(data.loyer_base)) + row('Provisions pour charges', formatMontant(data.loyer_charges)) + row('Total reçu', formatMontant(paid), { bold: true, bg: '#f8fafc' })
+            : row('Montant dû (loyer + charges)', formatMontant(data.total)) + row('Montant reçu', formatMontant(paid)) + row('Reste dû', formatMontant(data.total - paid), { bold: true, color: '#b91c1c', bg: '#fef2f2' }));
         const recuText = isFull
             ? `Reçu de <strong>${data.locataire_nom}</strong> la somme de <strong>${formatMontant(paid)}</strong>,
                         au titre du paiement du loyer et des charges du local d'habitation désigné ci-dessus, pour la période du <strong>${periodStartStr}</strong> au <strong>${periodEndStr}</strong>.`
@@ -881,46 +1224,66 @@ function buildQuittances() {
                         Le paiement de la présente quittance n'emporte pas présomption de paiement des termes antérieurs.<br>Sous réserve de tous mes droits pour le passé et l'avenir.`
             : `Paiement partiel : une quittance sera délivrée après règlement intégral du terme.<br>Sous réserve de tous mes droits pour le passé et l'avenir.`;
 
+        const numero = `${isFull ? 'Q' : 'R'}-${year}-${String(monthIdx + 1).padStart(2, '0')}`;
+        const accent = isFull ? '#1d4ed8' : '#b45309';
         let pageHtml = `
             <div class="quittance-page">
-                <div style="border-bottom: 2px solid #2563eb; padding-bottom: 15px; margin-bottom: 30px;">
-                    <h1 style="font-size: 24px; color: #1e3a8a; margin: 0; text-transform: uppercase; font-weight: bold; text-align: center;">${docTitle}</h1>
-                    <p style="text-align: center; margin-top: 5px; font-size: 16px; color: #4b5563;">Mois de : <strong>${monthName} ${year}</strong></p>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 40px;">
-                    <div style="width: 45%;">
-                        <h3 style="font-size: 14px; color: #6b7280; margin-bottom: 5px; text-transform: uppercase;">Bailleur</h3>
-                        <p style="font-weight: bold; margin: 0;">${data.bailleur_nom}</p>
-                        <p style="margin: 5px 0 0 0; line-height: 1.4;">${data.bailleur_adresse}</p>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:24px;">
+                    <div style="display:flex; gap:14px; align-items:center; max-width:55%;">
+                        <div style="width:54px; height:54px; border-radius:14px; background:${accent}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:700; letter-spacing:1px; flex-shrink:0;">${data.initiales}</div>
+                        <div>
+                            <div style="font-size:15px; font-weight:700; color:#0f172a;">${data.bailleur_nom || 'Le Bailleur'}</div>
+                            <div style="font-size:12px; color:#64748b; line-height:1.45; margin-top:2px;">${data.bailleur_adresse}</div>
+                        </div>
                     </div>
-                    <div style="width: 45%; background-color: #f3f4f6; padding: 15px; border-radius: 8px;">
-                        <h3 style="font-size: 14px; color: #6b7280; margin-bottom: 5px; text-transform: uppercase;">Locataire</h3>
-                        <p style="font-weight: bold; margin: 0;">${data.locataire_nom}</p>
-                        <p style="margin: 5px 0 0 0; line-height: 1.4;">Adresse de location :<br>${data.logement_adresse}</p>
+                    <div style="text-align:right;">
+                        <div style="font-size:24px; font-weight:800; color:${accent}; text-transform:uppercase; letter-spacing:.5px; line-height:1.1;">${docTitle}</div>
+                        <div style="font-size:12px; color:#64748b; margin-top:6px;">N° <strong style="color:#0f172a;">${numero}</strong></div>
+                        <div style="display:inline-block; margin-top:8px; padding:4px 12px; border-radius:999px; background:#f1f5f9; font-size:13px; font-weight:600; color:#334155;">${monthName} ${year}</div>
                     </div>
                 </div>
-                <div style="margin-bottom: 30px;">
-                    <p style="font-size: 15px; line-height: 1.6; text-align: justify;">
-                        ${recuText}
-                    </p>
-                </div>
-                <div style="margin-bottom: 40px;">
-                    <h3 style="font-size: 16px; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px; margin-bottom: 15px;">Détail du règlement</h3>
-                    <table style="width: 100%; border-collapse: collapse;">
-                        ${detailHtml}
-                    </table>
-                </div>
-                <div style="margin-bottom: 40px;">
-                    <p style="font-size: 12px; color: #6b7280; font-style: italic;">
-                        ${mentionText}
-                    </p>
-                </div>
-                <div style="display: flex; justify-content: flex-end;">
-                    <div style="text-align: right; width: 300px;">
-                        <p style="margin-bottom: 15px;">Fait à <strong>${data.lieu_emission}</strong>, le <strong>${dateGeneration}</strong></p>
-                        <p style="margin-bottom: 10px;">Le Bailleur,</p>
-                        ${data.signature ? `<img src="${data.signature}" style="max-width: 200px; max-height: 100px; margin-left: auto; display: block;" alt="Signature">` : '<div style="height: 80px; border: 1px dashed #ccc; display: flex; align-items: center; justify-content: center; color: #999; font-size: 12px;">[Signature manquante]</div>'}
+
+                <div style="height:3px; background:linear-gradient(90deg, ${accent}, #93c5fd); border-radius:3px; margin:26px 0 28px;"></div>
+
+                <div style="display:flex; gap:18px; margin-bottom:28px;">
+                    <div style="flex:1; border:1px solid #e2e8f0; border-radius:12px; padding:16px;">
+                        <div style="font-size:11px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px;">Locataire</div>
+                        <div style="font-size:15px; font-weight:700; color:#0f172a;">${data.locataire_nom}</div>
                     </div>
+                    <div style="flex:1.4; border:1px solid #e2e8f0; border-radius:12px; padding:16px;">
+                        <div style="font-size:11px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px;">Logement loué</div>
+                        <div style="font-size:13px; color:#334155; line-height:1.45;">${data.logement_adresse}</div>
+                    </div>
+                </div>
+
+                <div style="background:${isFull ? '#eff6ff' : '#fffbeb'}; border:1px solid ${isFull ? '#bfdbfe' : '#fde68a'}; border-radius:14px; padding:20px 22px; display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
+                    <div>
+                        <div style="font-size:12px; font-weight:700; color:${accent}; text-transform:uppercase; letter-spacing:1px;">Montant reçu</div>
+                        <div style="font-size:13px; color:#475569; margin-top:4px;">Période du ${periodStartStr} au ${periodEndStr}</div>
+                    </div>
+                    <div style="font-size:32px; font-weight:800; color:#0f172a;">${formatMontant(paid)}</div>
+                </div>
+
+                <p style="font-size:14px; line-height:1.65; color:#334155; text-align:justify; margin:0 0 24px;">${recuText}</p>
+
+                <table style="width:100%; border-collapse:collapse; font-size:14px; margin-bottom:24px;">
+                    ${detailHtml}
+                </table>
+
+                <p style="font-size:11px; line-height:1.55; color:#94a3b8; font-style:italic; margin:0 0 30px;">${mentionText}</p>
+
+                <div style="display:flex; justify-content:flex-end;">
+                    <div style="width:290px; text-align:right;">
+                        <div style="font-size:13px; color:#475569;">Fait à <strong style="color:#0f172a;">${data.lieu_emission}</strong>, le <strong style="color:#0f172a;">${dateGeneration}</strong></div>
+                        <div style="font-size:13px; color:#475569; margin:10px 0 8px;">Le Bailleur,</div>
+                        ${data.signature ? `<img src="${data.signature}" style="max-width:200px; max-height:95px; margin-left:auto; display:block;" alt="Signature">` : '<div style="height:80px; border:1px dashed #cbd5e1; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#94a3b8; font-size:12px;">Signature</div>'}
+                        <div style="font-size:13px; font-weight:600; color:#0f172a; margin-top:6px;">${data.bailleur_nom}</div>
+                    </div>
+                </div>
+
+                <div style="position:absolute; left:60px; right:60px; bottom:36px; border-top:1px solid #e2e8f0; padding-top:10px; display:flex; justify-content:space-between; font-size:10px; color:#94a3b8;">
+                    <span>${docTitle} n° ${numero}</span>
+                    <span>Émise le ${dateGeneration}</span>
                 </div>
             </div>
         `;
@@ -954,17 +1317,70 @@ function setPdfBusy(btn, busy) {
     btn.classList.toggle('hidden', busy);
 }
 
-document.getElementById('btn-generate').addEventListener('click', async () => {
-    const btn = document.getElementById('btn-generate');
+// --- APERÇU AVANT TÉLÉCHARGEMENT ---
+const PAGE_W = 794, PAGE_H = 1120; // A4 à 96 dpi
+let previewResult = null;
+
+function layoutPreview() {
+    const box = document.getElementById('preview-pages');
+    const scale = Math.min(1, (box.clientWidth - 24) / PAGE_W);
+    box.querySelectorAll('.preview-frame').forEach(f => {
+        f.style.width = PAGE_W * scale + 'px'; f.style.height = PAGE_H * scale + 'px';
+        f.firstElementChild.style.transform = `scale(${scale})`;
+    });
+}
+window.addEventListener('resize', () => { if (previewResult) layoutPreview(); });
+
+function openQuittancePreview() {
     const r = buildQuittances();
     if (!r) return;
-    setPdfBusy(btn, true);
+    previewResult = r;
+    const box = document.getElementById('preview-pages');
+    box.innerHTML = '';
+    document.querySelectorAll('#pdf-workspace .quittance-page').forEach(page => {
+        const frame = document.createElement('div');
+        frame.className = 'preview-frame mx-auto bg-white shadow-md rounded overflow-hidden';
+        const inner = page.cloneNode(true);
+        inner.style.transformOrigin = 'top left';
+        frame.appendChild(inner);
+        box.appendChild(frame);
+    });
+    document.getElementById('preview-summary').innerText = quittanceSummary(r);
+    document.getElementById('preview-modal').classList.remove('hidden');
+    requestAnimationFrame(layoutPreview);
+}
+window.closePreview = function() {
+    document.getElementById('preview-modal').classList.add('hidden');
+    document.getElementById('preview-pages').innerHTML = '';
+    document.getElementById('pdf-workspace').innerHTML = '';
+    previewResult = null;
+};
+window.downloadFromPreview = async function() {
+    if (!previewResult) return;
+    const r = previewResult, btn = document.getElementById('preview-download');
+    btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Création…';
     try {
         await renderWorkspacePdf(w => w.set({ filename: r.filename }).save());
-        showToast("PDF généré : " + quittanceSummary(r));
+        showToast("PDF téléchargé : " + quittanceSummary(r));
+        closePreview();
     } catch (error) { showToast("Erreur création PDF.", true); }
-    finally { setPdfBusy(btn, false); }
-});
+    finally { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-download"></i> Télécharger le PDF'; }
+};
+window.sendFromPreview = function() { closePreview(); sendQuittances(); };
+
+// Raccourcis pour un mois précis (tableau de bord, historique, après encaissement)
+window.openQuittanceFor = function(monthKey) {
+    document.getElementById('date_debut').value = monthKey;
+    document.getElementById('date_fin').value = monthKey;
+    openQuittancePreview();
+};
+window.sendQuittanceFor = function(monthKey) {
+    document.getElementById('date_debut').value = monthKey;
+    document.getElementById('date_fin').value = monthKey;
+    sendQuittances();
+};
+
+document.getElementById('btn-generate').addEventListener('click', openQuittancePreview);
 
 // --- GESTION DE L'API GMAIL ---
 window.authorizeGmail = function(callback) {
@@ -1016,12 +1432,15 @@ async function sendEmailViaGmailAPI(to, subject, body, pdfDataUri, filename = 'q
     } catch (error) { showToast("Erreur réseau lors de l'envoi de l'email.", true); }
 }
 
-document.getElementById('btn-generate-email').addEventListener('click', async () => {
+document.getElementById('btn-generate-email').addEventListener('click', () => sendQuittances());
+
+function sendQuittances() {
     const email = document.getElementById('locataire_email').value;
     if (!email) { showToast("Attention: Renseignez l'email du locataire dans l'onglet 'Bail'", true); switchTab('locataire'); return; }
     if (!document.getElementById('google_client_id').value) { showToast("L'ID Client Google est manquant pour l'envoi direct.", true); switchTab('locataire'); return; }
 
-    const subject = `Votre quittance de loyer`;
+    const dDeb = document.getElementById('date_debut').value, dFin = document.getElementById('date_fin').value;
+    const subject = dDeb === dFin ? `Votre quittance de loyer – ${monthLabel(dDeb)}` : `Vos quittances de loyer – ${monthLabel(dDeb)} à ${monthLabel(dFin)}`;
     const body = `Bonjour,\n\nVeuillez trouver en pièce jointe votre quittance de loyer.\n\nCordialement,\n${document.getElementById('bailleur_nom').value || 'Le Bailleur'}`;
 
     // On vérifie la période (loyers encaissés) avant de demander la confirmation
@@ -1035,13 +1454,14 @@ document.getElementById('btn-generate-email').addEventListener('click', async ()
         const r2 = buildQuittances();
         if (!r2) return;
         setPdfBusy(btn, true);
+        showToast("Préparation du PDF…");
         try {
             const pdfDataUri = await renderWorkspacePdf(w => w.outputPdf('datauristring'));
             await sendEmailViaGmailAPI(email, subject, body, pdfDataUri, r2.filename);
         } catch (err) { showToast("Erreur lors de la préparation de la pièce jointe.", true); }
         finally { setPdfBusy(btn, false); }
-    });
-});
+    }, { confirmLabel: "Oui, envoyer l'email", confirmIcon: 'fa-paper-plane', extraLabel: 'Voir l\'aperçu', onExtra: () => openQuittancePreview() });
+}
 
 window.sendRelanceEmail = function() {
     const email = document.getElementById('locataire_email').value;

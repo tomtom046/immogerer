@@ -1,5 +1,6 @@
-#pdf-workspace { display: none; background: white; }
-.quittance-page { width: 100%; padding: 40px; font-family: 'Arial', sans-serif; color: #333; box-sizing: border-box; page-break-after: always; }
+#pdf-workspace { display: none; background: white; width: 794px; }
+/* Une quittance = une page A4 (794 x 1120 px à 96 dpi) */
+.quittance-page { position: relative; width: 794px; height: 1120px; padding: 56px 60px; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; color: #0f172a; background: #fff; box-sizing: border-box; page-break-after: always; }
 .quittance-page:last-child { page-break-after: auto; }
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: #f1f1f1; }
@@ -26,3 +27,70 @@
     .fc .fc-button { padding: .3rem .5rem; font-size: .8rem; }
     #toast { left: 1rem; right: 1rem; top: calc(env(safe-area-inset-top) + 4rem); justify-content: center; }
 }
+
+/* --- Finitions --- */
+/* Squelette de chargement (à la place de "0,00 €" avant l'arrivée des données) */
+.skeleton { color: transparent !important; background: linear-gradient(90deg, rgba(148,163,184,.18) 25%, rgba(148,163,184,.35) 50%, rgba(148,163,184,.18) 75%); background-size: 200% 100%; animation: skeleton 1.2s ease-in-out infinite; border-radius: 6px; }
+@keyframes skeleton { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+/* Apparition douce des onglets et des fenêtres */
+.tab-content.block, .tab-content.flex { animation: fadeUp .22s ease-out; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.modal-card { animation: modalIn .2s ease-out; }
+@keyframes modalIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+#toast { transition: opacity .3s; }
+.preview-frame > .quittance-page { transform-origin: top left; }
+details > summary::-webkit-details-marker { display: none; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* --- MODE SOMBRE --- */
+/* Le thème est porté par la classe "dark" sur <html> ; on réajuste les couleurs utilitaires Tailwind utilisées par l'app.
+   Les quittances (#pdf-workspace, aperçu) restent toujours en clair. */
+html.dark { color-scheme: dark; }
+html.dark body, html.dark .bg-gray-100, html.dark .bg-slate-50 { background-color: #0b1220 !important; }
+html.dark .bg-white { background-color: #111827 !important; }
+html.dark .bg-slate-100 { background-color: #1f2937 !important; }
+html.dark .bg-slate-200 { background-color: #273449 !important; }
+html.dark .text-slate-800, html.dark .text-gray-800, html.dark .text-slate-900 { color: #e5e7eb !important; }
+html.dark .text-slate-700 { color: #d1d5db !important; }
+html.dark .text-slate-600 { color: #b6c0cd !important; }
+html.dark .text-slate-500 { color: #94a3b8 !important; }
+html.dark .text-slate-400 { color: #7c8aa0 !important; }
+html.dark .border-slate-100, html.dark .border-slate-200, html.dark .border-slate-300, html.dark .border-b, html.dark .border-t, html.dark .divide-slate-100 > * + * { border-color: #243042 !important; }
+html.dark input, html.dark select, html.dark textarea { background-color: #0f172a !important; color: #e5e7eb !important; border-color: #334155 !important; }
+html.dark input::placeholder, html.dark textarea::placeholder { color: #64748b !important; }
+html.dark input:disabled, html.dark textarea:disabled { background-color: #1f2937 !important; }
+/* Pastilles et encadrés colorés : teintes translucides lisibles sur fond sombre */
+html.dark .bg-green-50, html.dark .bg-green-100 { background-color: rgba(34,197,94,.14) !important; }
+html.dark .bg-red-50, html.dark .bg-red-100 { background-color: rgba(239,68,68,.14) !important; }
+html.dark .bg-blue-50, html.dark .bg-blue-100 { background-color: rgba(59,130,246,.15) !important; }
+html.dark .bg-purple-50, html.dark .bg-purple-100 { background-color: rgba(168,85,247,.15) !important; }
+html.dark .bg-orange-50, html.dark .bg-orange-100 { background-color: rgba(249,115,22,.15) !important; }
+html.dark .bg-amber-50, html.dark .bg-amber-100 { background-color: rgba(245,158,11,.15) !important; }
+html.dark .bg-fuchsia-100 { background-color: rgba(217,70,239,.15) !important; }
+html.dark .bg-rose-100 { background-color: rgba(244,63,94,.15) !important; }
+html.dark .bg-pink-100 { background-color: rgba(236,72,153,.15) !important; }
+html.dark .bg-indigo-100 { background-color: rgba(99,102,241,.18) !important; }
+html.dark .bg-emerald-50 { background-color: rgba(16,185,129,.14) !important; }
+html.dark [class*="border-green-"], html.dark [class*="border-red-"], html.dark [class*="border-blue-"], html.dark [class*="border-purple-"], html.dark [class*="border-orange-"], html.dark [class*="border-amber-"] { border-color: rgba(148,163,184,.25) !important; }
+html.dark .text-green-700, html.dark .text-green-800, html.dark .text-green-900 { color: #86efac !important; }
+html.dark .text-red-700, html.dark .text-red-800 { color: #fca5a5 !important; }
+html.dark .text-blue-700, html.dark .text-blue-800, html.dark .text-blue-900 { color: #93c5fd !important; }
+html.dark .text-purple-700, html.dark .text-purple-800, html.dark .text-purple-900 { color: #d8b4fe !important; }
+html.dark .text-orange-700, html.dark .text-orange-800 { color: #fdba74 !important; }
+html.dark .text-amber-700, html.dark .text-amber-900 { color: #fcd34d !important; }
+html.dark .text-fuchsia-700 { color: #f0abfc !important; }
+html.dark .text-rose-700 { color: #fda4af !important; }
+html.dark .text-pink-700 { color: #f9a8d4 !important; }
+html.dark .text-indigo-700 { color: #a5b4fc !important; }
+html.dark .hover:bg-slate-100:hover, html.dark .hover:bg-slate-50:hover, html.dark .hover:bg-slate-200:hover { background-color: #1f2937 !important; }
+html.dark .shadow-sm, html.dark .shadow-md { box-shadow: 0 1px 3px rgba(0,0,0,.5) !important; }
+html.dark #toast.bg-green-100 { background-color: #14532d !important; color: #dcfce7 !important; }
+html.dark #toast.bg-red-100 { background-color: #7f1d1d !important; color: #fee2e2 !important; }
+html.dark ::-webkit-scrollbar-track { background: #0b1220; }
+html.dark ::-webkit-scrollbar-thumb { background: #334155; }
+/* Calendrier */
+html.dark .fc { --fc-border-color: #243042; --fc-page-bg-color: #111827; --fc-neutral-bg-color: #1f2937; --fc-list-event-hover-bg-color: #1f2937; --fc-today-bg-color: rgba(59,130,246,.12); color: #d1d5db; }
+html.dark .fc-toolbar-title { color: #e5e7eb !important; }
+/* Les quittances restent claires dans l'aperçu */
+html.dark #preview-pages { background-color: #1f2937 !important; }
+html.dark .preview-frame, html.dark .preview-frame .quittance-page { background: #fff !important; }
