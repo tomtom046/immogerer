@@ -1,0 +1,10 @@
+#pdf-workspace { display: none; background: white; }
+.quittance-page { width: 100%; padding: 40px; font-family: 'Arial', sans-serif; color: #333; box-sizing: border-box; page-break-after: always; }
+.quittance-page:last-child { page-break-after: auto; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #f1f1f1; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+.tab-btn.active { background-color: #2563eb; color: white; }
+.fc-event { cursor: pointer; }
+.fc-toolbar-title { font-size: 1.25rem !important; color: #1e293b; }
